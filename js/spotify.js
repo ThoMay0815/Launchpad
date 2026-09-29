@@ -6,7 +6,10 @@
  * könnte z. B. "Lautstärke 0" nach "Play" des nächsten Clips ankommen.
  */
 
-import { REQUEST_TIMEOUT_MS, SPOTIFY_API } from './config.js';
+import { REQUEST_TIMEOUT_MS, SERVER_RETRY_DELAY_MS, SPOTIFY_API } from './config.js';
+
+const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class SpotifyError extends Error {
   constructor(message, { status = 0, reason } = {}) {
@@ -20,8 +23,9 @@ export class SpotifyError extends Error {
 /** Übersetzt Spotify-Fehler in Meldungen, mit denen man in der Halle etwas anfangen kann. */
 export function describeError(status, reason, fallback) {
   if (reason === 'NO_ACTIVE_DEVICE' || status === 404) {
-    return 'Spotify-Gerät nicht erreichbar. Spotify auf dem Abspielgerät öffnen und Gerät neu wählen.';
+    return 'Spotify-Gerät nicht erreichbar. Spotify auf dem Abspielgerät öffnen, am besten "Wach halten" einschalten.';
   }
+  if (RETRYABLE_STATUS.has(status)) return `Spotify-Server antworten gerade nicht (Fehler ${status}). Nochmal tippen.`;
   if (reason === 'PREMIUM_REQUIRED') return 'Für die Steuerung ist Spotify Premium nötig.';
   if (reason === 'VOLUME_CONTROL_DISALLOW') return 'Dieses Gerät erlaubt keine Lautstärkesteuerung.';
   if (status === 429) return 'Zu viele Anfragen an Spotify. Kurz warten und erneut tippen.';
@@ -33,8 +37,9 @@ export class SpotifyClient {
    * @param {{getAccessToken: (opts?: {forceRefresh?: boolean}) => Promise<string>}} auth
    * @param {{onLatency?: (ms: number) => void, fetchImpl?: typeof fetch}} options
    */
-  constructor(auth, { onLatency = () => {}, fetchImpl } = {}) {
+  constructor(auth, { onLatency = () => {}, fetchImpl, retryDelayMs = SERVER_RETRY_DELAY_MS } = {}) {
     this.auth = auth;
+    this.retryDelayMs = retryDelayMs;
     this.onLatency = onLatency;
     this.fetchImpl = fetchImpl || ((...args) => fetch(...args));
     this.tail = Promise.resolve();
@@ -51,12 +56,17 @@ export class SpotifyClient {
     return this.enqueue(() => this.send(method, path, options));
   }
 
-  async send(method, path, { query, body } = {}, isRetry = false) {
+  /**
+   * @param {{tokenRetried?: boolean, serverRetried?: boolean}} attempt
+   *   tokenRetried: nach 401 wurde das Token schon einmal erneuert
+   *   serverRetried: nach einem Serverfehler wurde schon einmal wiederholt
+   */
+  async send(method, path, { query, body } = {}, attempt = {}) {
     const url = new URL(`${SPOTIFY_API}${path}`);
     Object.entries(query || {}).forEach(([key, value]) => {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
     });
-    const token = await this.auth.getAccessToken({ forceRefresh: isRetry });
+    const token = await this.auth.getAccessToken({ forceRefresh: Boolean(attempt.tokenRetried) });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -80,7 +90,14 @@ export class SpotifyClient {
     this.onLatency(Math.round(performance.now() - started));
 
     // Abgelaufenes Token: einmal erneuern und wiederholen.
-    if (response.status === 401 && !isRetry) return this.send(method, path, { query, body }, true);
+    if (response.status === 401 && !attempt.tokenRetried) {
+      return this.send(method, path, { query, body }, { ...attempt, tokenRetried: true });
+    }
+    // Vorübergehende Serverfehler wie 502 Bad Gateway: einmal kurz warten und wiederholen.
+    if (RETRYABLE_STATUS.has(response.status) && !attempt.serverRetried) {
+      await sleep(this.retryDelayMs);
+      return this.send(method, path, { query, body }, { ...attempt, serverRetried: true });
+    }
     if (response.status === 204 || response.status === 202) return null;
 
     const text = await response.text();

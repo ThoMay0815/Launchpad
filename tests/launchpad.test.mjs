@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import {
   buildFadeSteps,
   buildPlayBody,
+  durationFromEnd,
+  idleAction,
   formatSeconds,
   formatTime,
   makeId,
@@ -39,6 +41,10 @@ describe('parseSpotifyLink', () => {
   test('erkennt Links mit Sprachpfad und Playlists', () => {
     assert.equal(parseSpotifyLink(`https://open.spotify.com/intl-de/track/${TRACK_ID}`).uri, `spotify:track:${TRACK_ID}`);
     assert.equal(parseSpotifyLink(`https://open.spotify.com/playlist/${TRACK_ID}`).type, 'playlist');
+  });
+
+  test('akzeptiert auch Einbetten-Links (embed)', () => {
+    assert.equal(parseSpotifyLink(`https://open.spotify.com/embed/track/${TRACK_ID}?utm_source=generator`).uri, `spotify:track:${TRACK_ID}`);
   });
 
   test('akzeptiert Spotify-URIs', () => {
@@ -310,7 +316,7 @@ describe('SpotifyClient', () => {
         order.push(`start ${mine}`);
         await sleep(mine === 1 ? 30 : 1);
         order.push(`ende ${mine}`);
-        return mine === 1 ? new Response('{}', { status: 500 }) : new Response(null, { status: 204 });
+        return mine === 1 ? new Response('{}', { status: 400 }) : new Response(null, { status: 204 });
       },
     });
     const first = client.setVolume('dev', 50).catch(() => 'fehler');
@@ -318,5 +324,119 @@ describe('SpotifyClient', () => {
     assert.equal(await first, 'fehler');
     await second;
     assert.deepEqual(order, ['start 1', 'ende 1', 'start 2', 'ende 2']);
+  });
+});
+
+describe('Endpunkt und Wach halten', () => {
+  test('durationFromEnd rechnet Ende in Dauer um', () => {
+    assert.deepEqual(durationFromEnd(65_000, '1:12'), { durationMs: 7000 });
+    assert.deepEqual(durationFromEnd(65_000, '1:12,5'), { durationMs: 7500 });
+    assert.deepEqual(durationFromEnd(65_000, ''), { durationMs: 0 });
+    assert.deepEqual(durationFromEnd(65_000, '0'), { durationMs: 0 });
+    assert.match(durationFromEnd(65_000, '1:00').error, /nach dem Start/);
+    assert.match(durationFromEnd(65_000, 'abc').error, /m:ss/);
+  });
+
+  const SILENCE = 'spotify:track:stille';
+  test('idleAction startet Stille, wenn nichts oder Pause', () => {
+    assert.equal(idleAction(null, SILENCE), 'start');
+    assert.equal(idleAction({ is_playing: false, item: { uri: SILENCE, duration_ms: 3_600_000 }, progress_ms: 10 }, SILENCE), 'start');
+    assert.equal(idleAction({ is_playing: false, item: { uri: 'spotify:track:anderer' } }, SILENCE), 'start');
+  });
+
+  test('idleAction lässt laufende Stille und fremde Musik in Ruhe', () => {
+    assert.equal(idleAction({ is_playing: true, item: { uri: SILENCE, duration_ms: 3_600_000 }, progress_ms: 60_000 }, SILENCE), 'none');
+    assert.equal(idleAction({ is_playing: true, item: { uri: 'spotify:track:anderer' } }, SILENCE), 'none');
+  });
+
+  test('idleAction startet Stille kurz vor ihrem Ende neu', () => {
+    assert.equal(idleAction({ is_playing: true, item: { uri: SILENCE, duration_ms: 600_000 }, progress_ms: 550_000 }, SILENCE, 90_000), 'start');
+  });
+
+  const IDLE = `spotify:track:${'S'.repeat(22)}`;
+  function makeIdleController(client) {
+    const device = { id: 'dev', name: 'iPhone', supportsVolume: false, volume: null };
+    const controller = new PlaybackController(client, {
+      getDevice: () => device,
+      getMasterVolume: () => 100,
+      getIdleUri: () => IDLE,
+      pollIntervalMs: 20,
+      idleCheckMs: 20,
+    });
+    controller.setDevice(device);
+    return controller;
+  }
+
+  test('mit Wach halten läuft beim Stopp Stille statt Pause', async () => {
+    const client = new FakeClient();
+    const controller = makeIdleController(client);
+    await controller.toggle('tor', clipA);
+    await controller.toggle('tor', clipA);
+    assert.deepEqual(client.calls, [`play:spotify:track:${TRACK_ID}@65000`, `play:${IDLE}@0`]);
+    assert.equal(controller.phase, 'idle');
+  });
+
+  test('keepAlive false erzwingt eine echte Pause', async () => {
+    const client = new FakeClient();
+    const controller = makeIdleController(client);
+    await controller.stop({ fade: false, keepAlive: false });
+    assert.deepEqual(client.calls, ['pause']);
+  });
+
+  test('der Wächter startet Stille, wenn Spotify pausiert ist', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => ({ is_playing: false, item: null });
+    const controller = makeIdleController(client);
+    controller.startIdleWatch();
+    await sleep(60);
+    controller.stopIdleWatch();
+    assert.ok(client.calls.includes(`play:${IDLE}@0`));
+  });
+
+  test('eine Taste während der Wächter-Abfrage gewinnt gegen die Stille', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => {
+      await sleep(30);
+      return { is_playing: false, item: null };
+    };
+    const controller = makeIdleController(client);
+    const check = controller.checkIdle();
+    await sleep(5);
+    await controller.play('tor', clipB);
+    await check;
+    assert.deepEqual(client.calls, [`play:spotify:track:${TRACK_ID}@1000`]);
+    assert.equal(controller.current.clip.id, 'b');
+    await controller.stop({ fade: false, keepAlive: false });
+  });
+
+  test('nach Songende eines Einlauf-Clips übernimmt die Stille', async () => {
+    const client = new FakeClient();
+    let playing = true;
+    client.getPlayback = async () => ({ is_playing: playing, item: null });
+    const controller = makeIdleController(client);
+    await controller.play('einlauf', clipA);
+    playing = false;
+    await sleep(80);
+    assert.equal(controller.phase, 'idle');
+    assert.equal(client.calls.at(-1), `play:${IDLE}@0`);
+  });
+});
+
+describe('SpotifyClient Serverfehler', () => {
+  test('wiederholt bei 502 einmal und meldet danach verständlich', async () => {
+    let count = 0;
+    const auth = { getAccessToken: async () => 't' };
+    const flaky = new SpotifyClient(auth, {
+      retryDelayMs: 1,
+      fetchImpl: async () => {
+        count += 1;
+        return count === 1 ? new Response('Bad Gateway', { status: 502 }) : new Response(null, { status: 204 });
+      },
+    });
+    assert.equal(await flaky.pause('dev'), null);
+    assert.equal(count, 2);
+
+    const broken = new SpotifyClient(auth, { retryDelayMs: 1, fetchImpl: async () => new Response('Bad Gateway', { status: 502 }) });
+    await assert.rejects(broken.pause('dev'), (err) => err.status === 502 && /Nochmal tippen/.test(err.message));
   });
 });

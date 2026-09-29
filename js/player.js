@@ -6,12 +6,17 @@
  * token noch aktuell ist, und brechen sonst still ab. Dadurch kann ein Tor-Clip jederzeit
  * einen gerade ausblendenden Einlauf-Clip ablösen, ohne dass danach noch ein "Pause" kommt.
  *
+ * Wach halten: iOS legt die Spotify-App im Hintergrund schlafen, sobald keine Musik läuft.
+ * Dann verschwindet sie als Spotify-Gerät. Ist ein Stille-Track hinterlegt, spielt der
+ * Controller im Leerlauf diesen Track statt zu pausieren. Ein Wächter startet ihn neu,
+ * falls er endet oder jemand pausiert.
+ *
  * Das Modul hängt nur an einem Client-Objekt mit play, pause, setVolume und getPlayback.
  * Eine spätere Engine für lokale Audiodateien kann dieselbe Schnittstelle bedienen.
  */
 
-import { FADE_STEPS, POLL_INTERVAL_MS } from './config.js';
-import { buildFadeSteps, buildPlayBody, clampVolume, scaledVolume, stopDelayMs } from './logic.js';
+import { FADE_STEPS, IDLE_CHECK_MS, IDLE_RESTART_MARGIN_MS, POLL_INTERVAL_MS } from './config.js';
+import { buildFadeSteps, buildPlayBody, clampVolume, idleAction, scaledVolume, stopDelayMs } from './logic.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -23,15 +28,32 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export class PlaybackController extends EventTarget {
   /**
    * @param {object} client Objekt mit play, pause, setVolume, getPlayback
-   * @param {{getDevice: () => Device | null, getMasterVolume: () => number, onVolumeUnsupported?: (d: Device) => void, pollIntervalMs?: number}} options
+   * @param {object} options
+   * @param {() => Device | null} options.getDevice
+   * @param {() => number} options.getMasterVolume
+   * @param {() => string | null} [options.getIdleUri] Stille-Track oder null, wenn Wach halten aus ist
+   * @param {(d: Device) => void} [options.onVolumeUnsupported]
    */
-  constructor(client, { getDevice, getMasterVolume, onVolumeUnsupported = () => {}, pollIntervalMs = POLL_INTERVAL_MS }) {
+  constructor(
+    client,
+    {
+      getDevice,
+      getMasterVolume,
+      getIdleUri = () => null,
+      onVolumeUnsupported = () => {},
+      pollIntervalMs = POLL_INTERVAL_MS,
+      idleCheckMs = IDLE_CHECK_MS,
+    },
+  ) {
     super();
     this.client = client;
     this.getDevice = getDevice;
     this.getMasterVolume = getMasterVolume;
+    this.getIdleUri = getIdleUri;
     this.onVolumeUnsupported = onVolumeUnsupported;
     this.pollIntervalMs = pollIntervalMs;
+    this.idleCheckMs = idleCheckMs;
+    this.idleTimer = null;
 
     this.token = 0;
     /** @type {Phase} */
@@ -96,7 +118,11 @@ export class PlaybackController extends EventTarget {
     }
   }
 
-  async stop({ fade = true } = {}) {
+  /**
+   * @param {{fade?: boolean, keepAlive?: boolean}} options
+   *   keepAlive false erzwingt eine echte Pause, z. B. beim Abmelden.
+   */
+  async stop({ fade = true, keepAlive = true } = {}) {
     const device = this.getDevice();
     const token = this.nextToken();
     const clip = this.current?.clip;
@@ -121,12 +147,15 @@ export class PlaybackController extends EventTarget {
     }
     if (token !== this.token) return;
 
+    const idleUri = keepAlive ? this.getIdleUri() : null;
     if (device) {
       try {
-        await this.client.pause(device.id);
+        // Mit Wach halten läuft statt Pause der Stille-Track weiter. Hörbar ist das wie ein Stopp.
+        if (idleUri) await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
+        else await this.client.pause(device.id);
       } catch (err) {
-        // 403 heißt meist "war schon pausiert". Das ist für einen Stopp kein Fehler.
-        if (err.status !== 403) {
+        // 403 heißt beim Pausieren meist "war schon pausiert". Das ist für einen Stopp kein Fehler.
+        if (idleUri || err.status !== 403) {
           if (token === this.token) this.reset();
           throw err;
         }
@@ -205,10 +234,46 @@ export class PlaybackController extends EventTarget {
       if (token !== this.token) return;
       try {
         const state = await this.client.getPlayback();
-        if (token === this.token && (!state || !state.is_playing)) this.reset();
+        if (token === this.token && (!state || !state.is_playing)) {
+          this.reset();
+          this.checkIdle().catch(() => {});
+        }
       } catch {
         // Polling ist Komfort. Fehler hier stören das Spiel nicht und werden nicht gemeldet.
       }
     }, this.pollIntervalMs);
+  }
+
+  // Wach halten
+
+  /** Startet den Wächter. Er fragt nur, wenn Wach halten aktiv ist und kein Clip läuft. */
+  startIdleWatch() {
+    if (this.idleTimer) return;
+    this.idleTimer = setInterval(() => {
+      this.checkIdle().catch(() => {
+        // Wächterfehler nicht melden. Der nächste Tastendruck zeigt ein echtes Problem ohnehin an.
+      });
+    }, this.idleCheckMs);
+  }
+
+  stopIdleWatch() {
+    clearInterval(this.idleTimer);
+    this.idleTimer = null;
+  }
+
+  /**
+   * Prüft im Leerlauf, ob der Stille-Track läuft, und startet ihn bei Bedarf.
+   * Tippt jemand während der Abfrage eine Taste, gewinnt die Taste.
+   */
+  async checkIdle() {
+    const idleUri = this.getIdleUri();
+    const device = this.getDevice();
+    if (!idleUri || !device || this.phase !== 'idle') return;
+    const token = this.token;
+    const state = await this.client.getPlayback();
+    if (token !== this.token || this.phase !== 'idle') return;
+    if (idleAction(state, idleUri, IDLE_RESTART_MARGIN_MS) === 'start') {
+      await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
+    }
   }
 }

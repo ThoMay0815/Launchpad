@@ -6,7 +6,7 @@ Diese Version ist ein **Test-Prototyp mit Spotify**. Er soll klären, ob Spotify
 
 ## Was der Prototyp kann und was nicht
 
-Er kann Clips per Tipp ab einer beliebigen Stelle starten, nach einer festen Dauer automatisch beenden, pro Kategorie rotieren und die Belegung sichern und wiederherstellen. Startpunkte lassen sich direkt aus der laufenden Spotify-Wiedergabe übernehmen.
+Er kann Clips per Tipp ab einer beliebigen Stelle starten, an einem festgelegten Endpunkt automatisch beenden, pro Kategorie rotieren und die Belegung sichern und wiederherstellen. Start- und Endpunkte lassen sich direkt aus der laufenden Spotify-Wiedergabe übernehmen. Die Funktion „Wach halten“ verhindert, dass iOS die Spotify-App im Leerlauf schlafen legt.
 
 Wichtige Grenzen, die direkt aus Spotify folgen:
 
@@ -75,13 +75,35 @@ Das Abspielgerät wird per Bluetooth oder Kabel mit der Box verbunden. Die Gerä
 - **Wiederholen aus.**
 - Alle Songs der Belegung **herunterladen**. Das spart Datenvolumen und Pufferzeit.
 
+## Wach halten (wichtig bei iPhone und iPad)
+
+**Das Problem:** iOS legt Apps im Hintergrund nach wenigen Sekunden schlafen, sobald sie keinen Ton abspielen. Läuft das Launchpad in Safari und Spotify im Hintergrund, verschwindet Spotify nach einer Pause als Gerät. Das Launchpad meldet dann „Spotify-Gerät nicht erreichbar“. Solange Musik läuft, bleibt Spotify wach.
+
+**Die Lösung:** Im Leerlauf spielt das Launchpad einen stillen Track, statt zu pausieren. Für iOS läuft damit durchgehend Musik, für dich ist es still. Ein Wächter prüft alle 20 Sekunden, ob die Stille noch läuft, und startet sie bei Bedarf neu, auch kurz bevor der Track endet.
+
+**Einrichten:**
+
+1. In Spotify nach „silence“ oder „Stille“ suchen und einen Track wählen, der **mindestens 5, besser 60 Minuten** lang ist.
+2. **Mit Kopfhörern bei voller Lautstärke prüfen**, dass wirklich nichts zu hören ist. Manche „Stille“-Tracks enthalten Rauschen oder Raumklang.
+3. Den Track in Spotify **herunterladen**.
+4. Im Launchpad unter „Mehr“ auf „Stille-Track festlegen“ tippen und den Link einfügen.
+5. Unter „Mehr“ „Wach halten einschalten“ wählen. Die Statusleiste zeigt „Wach halten an“.
+
+**Zu beachten:**
+
+- Im Bearbeitungsmodus ist Wach halten automatisch aus, damit die Stille nicht dein Suchen nach Start- und Endpunkten in Spotify überschreibt.
+- Läuft in Spotify ein anderer Song, den du selbst gestartet hast, lässt der Wächter ihn in Ruhe.
+- Nebeneffekte: etwas mehr Akkuverbrauch, und die Stille taucht in deinem Spotify-Verlauf auf. Ein Vorteil: Viele Bluetooth-Boxen schalten sich bei Stille-Wiedergabe nicht in den Standby.
+- Wacht Spotify trotzdem nicht auf, hilft „Spotify öffnen“ in der Statusleiste. Nach der Rückkehr lädt das Launchpad die Geräte automatisch neu.
+
 ## Clips einrichten
 
 1. „Bearbeiten (halten)“ etwa eine Sekunde gedrückt halten. Ein gelber Punkt zeigt Clips, deren Startpunkt noch nicht geprüft ist. Gestrichelte Clips haben noch keinen Link.
-2. Einen Clip antippen. Der schnellste Weg: In Spotify den Song bis zur gewünschten Stelle spielen und pausieren, dann im Editor „Aus Spotify übernehmen“. Song, Titel und Position werden übernommen.
-3. Mit „Vorhören oder stoppen“ prüfen und mit „0,5 s früher“ und „0,5 s später“ feinjustieren. Meist passt ein Start eine halbe Sekunde vor dem Höhepunkt am besten, weil die Verzögerung den Rest frisst.
-4. „Startpunkt geprüft“ anhaken und speichern.
-5. Danach über „Mehr“ die Belegung exportieren. Das ist dein Backup.
+2. Einen Clip antippen. Der schnellste Weg: In Spotify den Song bis zur gewünschten Stelle spielen und pausieren, dann beim **Startpunkt** „Aus Spotify übernehmen“. Song, Titel und Position werden übernommen.
+3. Genauso den **Endpunkt** setzen: in Spotify weiterspielen, an der Endstelle pausieren, beim Endpunkt „Aus Spotify übernehmen“. Unter dem Feld steht die berechnete Dauer. Endpunkt leer lassen heißt: läuft, bis du stoppst.
+4. Mit „Vorhören oder stoppen“ den ganzen Clip prüfen, mit „Ende vorhören“ nur die letzten drei Sekunden. Beide Punkte lassen sich mit „0,5 s früher“ und „0,5 s später“ feinjustieren. Meist passt ein Start eine halbe Sekunde vor dem Höhepunkt am besten, weil die Verzögerung den Rest frisst. Das Ausblenden endet genau am Endpunkt.
+5. „Startpunkt geprüft“ anhaken und speichern.
+6. Danach über „Mehr“ die Belegung exportieren. Das ist dein Backup.
 
 Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5 Sekunden, Fair-Play-Tor 4 Sekunden, Auszeit 20 Sekunden mit reduzierter Lautstärke, Einlauf bis zum manuellen Stopp.
 
@@ -100,11 +122,11 @@ Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5
 Voraussetzung ist Node.js ab Version 18, sonst nichts.
 
 ```bash
-npm test        # 27 Tests: Logik, Wiedergabesteuerung, API-Client
+npm test        # 38 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
 npm run check   # Syntaxprüfung aller Module
 ```
 
-Die Tests decken unter anderem ab: Link-Erkennung, Zeitformate, Rotation, Fade-Kurve, harter Stopp ohne Lautstärkesteuerung, automatischer Wechsel bei `VOLUME_CONTROL_DISALLOW`, Auto-Stopp, Abbruch eines laufenden Ausblendens durch einen neuen Clip, Token-Erneuerung bei 401 und die strikte Reihenfolge der Befehle.
+Die Tests decken unter anderem ab: Link-Erkennung (auch Einbetten-Links), Zeitformate, Endpunkt, Rotation, Fade-Kurve, harter Stopp ohne Lautstärkesteuerung, automatischer Wechsel bei `VOLUME_CONTROL_DISALLOW`, Auto-Stopp, Abbruch eines laufenden Ausblendens durch einen neuen Clip, Stille statt Pause, Wächter gegen Tastendruck, einmalige Wiederholung bei 502, Token-Erneuerung bei 401 und die strikte Reihenfolge der Befehle.
 
 ### Manuelles Testprotokoll (zu Hause, mit Box)
 
@@ -119,6 +141,8 @@ Die Tests decken unter anderem ab: Link-Erkennung, Zeitformate, Rotation, Fade-K
 | 7 | WLAN aus, mobile Daten an | Funktioniert weiter |
 | 8 | Internet ganz aus | Verständliche Fehlermeldung, kein Absturz |
 | 9 | Belegung exportieren, App-Daten löschen, importieren | Belegung vollständig zurück |
+| 10 | Wach halten an, iPhone 15 Minuten liegen lassen (Bildschirm an), dann Tor | Tor startet ohne Fehlermeldung |
+| 11 | Wach halten an, Launchpad-Bildschirm sperren, 5 Minuten warten, entsperren, Tor | Tor startet, eventuell nach „Aktualisieren“ |
 
 ### Verzögerung messen
 
@@ -147,7 +171,7 @@ Wird ein Kriterium verfehlt, ist die Umstellung auf eigene Audiodateien der näc
 - „Nicht stören“ auf allen beteiligten Geräten
 - Automatische Bildschirmsperre aus
 - Box verbunden, Pegel vor dem Spiel getestet
-- Spotify auf dem Abspielgerät geöffnet, Gerät in der App ausgewählt
+- Spotify auf dem Abspielgerät geöffnet, Gerät in der App ausgewählt, Wach halten an
 - Einen Tor-Clip einmal leise probeweise abgespielt
 
 ## Projektstruktur

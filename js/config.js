@@ -29,3 +29,15 @@ export const REQUEST_TIMEOUT_MS = 8_000;
 
 /** So lange muss "Bearbeiten" gedrückt werden, damit im Spiel nichts versehentlich verstellt wird. */
 export const LONG_PRESS_MS = 800;
+
+/** Kurze Pause vor dem einmaligen Wiederholen bei Serverfehlern (500, 502, 503, 504). */
+export const SERVER_RETRY_DELAY_MS = 300;
+
+/** Wach-halten: so oft prüft das Launchpad im Leerlauf, ob der Stille-Track noch läuft. */
+export const IDLE_CHECK_MS = 20_000;
+
+/** Wach-halten: Stille-Track neu starten, wenn weniger als diese Restzeit übrig ist. */
+export const IDLE_RESTART_MARGIN_MS = 90_000;
+
+/** "Ende vorhören" spielt diese Zeitspanne vor dem Endpunkt. */
+export const END_PREVIEW_MS = 3_000;

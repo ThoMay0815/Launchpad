@@ -3,13 +3,14 @@
  * Nutzerinhalte (Titel, Notizen) werden nur als textContent gesetzt, nie als HTML.
  */
 
-import { LONG_PRESS_MS } from './config.js';
+import { END_PREVIEW_MS, LONG_PRESS_MS } from './config.js';
 import { AuthError, SpotifyAuth, redirectUri } from './auth.js';
 import { SpotifyClient } from './spotify.js';
 import { PlaybackController } from './player.js';
 import * as store from './store.js';
 import {
   clampVolume,
+  durationFromEnd,
   formatSeconds,
   formatTime,
   makeId,
@@ -55,6 +56,8 @@ export class App {
     this.controller = new PlaybackController(this.client, {
       getDevice: () => this.device,
       getMasterVolume: () => this.settings.masterVolume,
+      // Im Bearbeitungsmodus bleibt Wach halten aus, damit Stille nicht dein manuelles Suchen in Spotify überschreibt.
+      getIdleUri: () => (this.settings.keepAlive && !this.editMode && this.settings.idleUri) || null,
       onVolumeUnsupported: () => {
         this.toast('Dieses Gerät erlaubt keine Lautstärkesteuerung. Clips stoppen deshalb ohne Ausblenden.');
         this.renderStatus();
@@ -77,6 +80,8 @@ export class App {
     this.renderApp();
     this.installLifecycleHooks();
     await this.refreshDevices();
+    this.controller.startIdleWatch();
+    this.controller.checkIdle().catch(() => {});
   }
 
   // Einrichtung
@@ -140,7 +145,10 @@ export class App {
     );
 
     let hint = 'Spotify auf dem Abspielgerät öffnen, dann aktualisieren';
-    if (this.device) hint = this.device.supportsVolume ? 'Ausblenden aktiv' : 'Kein Ausblenden möglich, Stopp ist hart';
+    if (this.device) {
+      hint = this.device.supportsVolume ? 'Ausblenden aktiv' : 'Kein Ausblenden möglich, Stopp ist hart';
+      hint += this.settings.keepAlive && this.settings.idleUri ? '. Wach halten an' : '. Wach halten aus';
+    }
 
     const master = this.device?.supportsVolume
       ? el('label', { class: 'topbar__master' }, [
@@ -172,6 +180,13 @@ export class App {
     const menu = el('details', { class: 'menu' }, [
       el('summary', { class: 'button', text: 'Mehr' }),
       el('div', { class: 'menu__panel' }, [
+        el('button', {
+          type: 'button',
+          class: 'button',
+          text: this.settings.keepAlive ? 'Wach halten ausschalten' : 'Wach halten einschalten',
+          onClick: () => this.toggleKeepAlive(),
+        }),
+        el('button', { type: 'button', class: 'button', text: 'Stille-Track festlegen', onClick: () => this.chooseIdleTrack() }),
         el('button', { type: 'button', class: 'button', text: 'Belegung exportieren', onClick: () => this.exportBoard() }),
         el('button', { type: 'button', class: 'button', text: 'Belegung importieren', onClick: () => fileInput.click() }),
         el('button', { type: 'button', class: 'button', text: 'Von Spotify abmelden', onClick: () => this.logout() }),
@@ -183,6 +198,8 @@ export class App {
       el('div', { class: 'topbar__group' }, [
         select,
         el('button', { type: 'button', class: 'button', text: 'Aktualisieren', onClick: () => this.refreshDevices() }),
+        // Öffnet die Spotify-App. Nach der Rückkehr lädt das Launchpad die Geräte automatisch neu.
+        el('a', { class: 'button', href: 'spotify:', text: 'Spotify öffnen' }),
       ]),
       el('span', { class: 'topbar__hint', text: hint }),
       master,
@@ -223,6 +240,46 @@ export class App {
     this.editMode = on;
     this.renderStatus();
     this.renderBoard();
+    if (!on) this.controller.checkIdle().catch(() => {});
+  }
+
+  // Wach halten
+
+  async toggleKeepAlive() {
+    if (!this.settings.keepAlive && !this.settings.idleUri) {
+      const chosen = this.chooseIdleTrack();
+      if (!chosen) return;
+    }
+    this.settings.keepAlive = !this.settings.keepAlive;
+    store.saveSettings(this.settings);
+    this.renderStatus();
+    if (this.settings.keepAlive) {
+      this.toast('Wach halten ist an. Im Leerlauf läuft der Stille-Track.');
+      this.controller.checkIdle().catch((err) => this.handleError(err));
+    } else {
+      this.toast('Wach halten ist aus.');
+      // Nur die Stille beenden. Ein gerade laufender Clip bleibt unangetastet.
+      if (this.controller.phase === 'idle') this.run(() => this.controller.stop({ fade: false, keepAlive: false }));
+    }
+  }
+
+  /** Fragt den Link zum Stille-Track ab. @returns {boolean} true, wenn ein gültiger Track gesetzt wurde */
+  chooseIdleTrack() {
+    const input = window.prompt(
+      'Spotify-Link zu einem stillen Track (mindestens 5, besser 60 Minuten Stille). In Spotify: Song, Teilen, Link kopieren.',
+      this.settings.idleUri || '',
+    );
+    if (input === null) return false;
+    const link = parseSpotifyLink(input);
+    if (!link || link.type !== 'track') {
+      this.toast('Das ist kein gültiger Spotify-Link zu einem einzelnen Song.', 'error');
+      return false;
+    }
+    this.settings.idleUri = link.uri;
+    store.saveSettings(this.settings);
+    this.toast('Stille-Track gespeichert.');
+    this.renderStatus();
+    return true;
   }
 
   renderBoard() {
@@ -457,13 +514,25 @@ export class App {
       artist: textInput(draft.artist),
       uri: textInput(draft.uri, { autocapitalize: 'off', spellcheck: 'false', inputmode: 'url' }),
       start: textInput(formatTime(draft.startMs), { inputmode: 'decimal' }),
-      duration: textInput(formatSeconds(draft.durationMs), { inputmode: 'decimal' }),
+      end: textInput(draft.durationMs > 0 ? formatTime(draft.startMs + draft.durationMs) : '', { inputmode: 'decimal' }),
       fade: textInput(formatSeconds(draft.fadeMs), { inputmode: 'decimal' }),
       volume: el('input', { type: 'number', min: '0', max: '100', step: '5', value: String(draft.volume) }),
       verified: el('input', { type: 'checkbox', checked: draft.startVerified }),
       note: textInput(draft.note || ''),
     };
     const errorEl = el('p', { class: 'editor__error', role: 'alert' });
+    const durationHint = el('span', { class: 'field__hint' });
+
+    /** Zeigt die aus Start und Ende berechnete Dauer, damit man den Schnitt im Blick hat. */
+    const updateDurationHint = () => {
+      const startMs = parseTime(inputs.start.value);
+      const result = startMs === null ? { error: 'Start prüfen.' } : durationFromEnd(startMs, inputs.end.value);
+      if (result.error) durationHint.textContent = result.error;
+      else if (result.durationMs === 0) durationHint.textContent = 'Kein Ende gesetzt: läuft, bis du stoppst.';
+      else durationHint.textContent = `Dauer: ${formatSeconds(result.durationMs)} Sekunden`;
+    };
+    inputs.start.addEventListener('input', updateDurationHint);
+    inputs.end.addEventListener('input', updateDurationHint);
 
     /** Liest das Formular. Wirft mit lesbarer Meldung, wenn etwas nicht passt. */
     const readForm = () => {
@@ -475,10 +544,11 @@ export class App {
         throw new Error('Link nicht erkannt. In Spotify "Teilen, Link kopieren" nutzen. Kurzlinks (spotify.link) erst im Browser öffnen und die volle Adresse kopieren.');
       }
       const startMs = parseTime(inputs.start.value);
-      const durationMs = parseTime(inputs.duration.value);
       const fadeMs = parseTime(inputs.fade.value);
       if (startMs === null) throw new Error('Start bitte als m:ss angeben, z. B. 1:05 oder 1:05,5.');
-      if (durationMs === null) throw new Error('Dauer bitte in Sekunden angeben, 0 heißt bis zum Stopp.');
+      const end = durationFromEnd(startMs, inputs.end.value);
+      if (end.error) throw new Error(end.error);
+      const { durationMs } = end;
       if (fadeMs === null) throw new Error('Ausblenden bitte in Sekunden angeben.');
       return {
         ...draft,
@@ -494,33 +564,56 @@ export class App {
       };
     };
 
-    const nudge = (deltaMs) => {
-      const current = parseTime(inputs.start.value) ?? 0;
-      inputs.start.value = formatTime(Math.max(0, current + deltaMs));
+    /** Verschiebt Start oder Ende um deltaMs. Ein leeres Ende startet beim Startpunkt. */
+    const nudge = (input, deltaMs) => {
+      const base = parseTime(input.value) ?? parseTime(inputs.start.value) ?? 0;
+      input.value = formatTime(Math.max(0, base + deltaMs));
+      updateDurationHint();
     };
 
-    const takeFromSpotify = async () => {
+    /**
+     * Übernimmt die aktuelle Spotify-Position.
+     * target "start" übernimmt zusätzlich Song, Titel und Interpret, "end" nur die Position.
+     */
+    const takeFromSpotify = async (target) => {
       try {
         const state = await this.client.getPlayback();
         if (!state?.item) {
           this.toast('In Spotify läuft gerade kein Song.', 'error');
           return;
         }
-        inputs.uri.value = state.item.uri;
-        if (!inputs.title.value.trim()) inputs.title.value = state.item.name;
-        if (!inputs.artist.value.trim()) inputs.artist.value = (state.item.artists || []).map((artist) => artist.name).join(', ');
-        inputs.start.value = formatTime(state.progress_ms);
-        this.toast('Song und Position übernommen.');
+        if (target === 'start') {
+          inputs.uri.value = state.item.uri;
+          if (!inputs.title.value.trim()) inputs.title.value = state.item.name;
+          if (!inputs.artist.value.trim()) inputs.artist.value = (state.item.artists || []).map((artist) => artist.name).join(', ');
+          inputs.start.value = formatTime(state.progress_ms);
+          this.toast('Song und Startpunkt übernommen.');
+        } else {
+          const current = parseSpotifyLink(inputs.uri.value);
+          if (current && current.uri !== state.item.uri) {
+            this.toast('Achtung: In Spotify läuft ein anderer Song als der hinterlegte.', 'error');
+            return;
+          }
+          inputs.end.value = formatTime(state.progress_ms);
+          this.toast('Endpunkt übernommen.');
+        }
+        updateDurationHint();
       } catch (err) {
         this.handleError(err);
       }
     };
 
-    const preview = () => {
+    const preview = (part) => {
       try {
         errorEl.textContent = '';
-        const candidate = readForm();
+        let candidate = readForm();
         if (!candidate.uri) throw new Error('Zum Vorhören wird ein Spotify-Link gebraucht.');
+        if (part === 'end') {
+          if (!(candidate.durationMs > 0)) throw new Error('Zum Vorhören des Endes bitte zuerst ein Ende setzen.');
+          const endMs = candidate.startMs + candidate.durationMs;
+          const from = Math.max(candidate.startMs, endMs - END_PREVIEW_MS);
+          candidate = { ...candidate, id: `${candidate.id}-ende`, startMs: from, durationMs: endMs - from };
+        }
         this.run(() => this.controller.toggle('preview', candidate));
       } catch (err) {
         errorEl.textContent = err.message;
@@ -566,19 +659,31 @@ export class App {
           el('span', { class: 'field__label', text: 'Startpunkt' }),
           el('div', { class: 'editor__row' }, [
             inputs.start,
-            el('button', { type: 'button', class: 'button', text: '0,5 s früher', onClick: () => nudge(-500) }),
-            el('button', { type: 'button', class: 'button', text: '0,5 s später', onClick: () => nudge(500) }),
+            el('button', { type: 'button', class: 'button', text: '0,5 s früher', onClick: () => nudge(inputs.start, -500) }),
+            el('button', { type: 'button', class: 'button', text: '0,5 s später', onClick: () => nudge(inputs.start, 500) }),
+            el('button', { type: 'button', class: 'button', text: 'Aus Spotify übernehmen', onClick: () => takeFromSpotify('start') }),
           ]),
           el('div', { class: 'editor__row' }, [
-            el('button', { type: 'button', class: 'button', text: 'Vorhören oder stoppen', onClick: preview }),
-            el('button', { type: 'button', class: 'button', text: 'Aus Spotify übernehmen', onClick: takeFromSpotify }),
+            el('button', { type: 'button', class: 'button', text: 'Vorhören oder stoppen', onClick: () => preview('all') }),
           ]),
+        ]),
+        el('div', { class: 'field field--wide' }, [
+          el('span', { class: 'field__label', text: 'Endpunkt' }),
+          el('div', { class: 'editor__row' }, [
+            inputs.end,
+            el('button', { type: 'button', class: 'button', text: '0,5 s früher', onClick: () => nudge(inputs.end, -500) }),
+            el('button', { type: 'button', class: 'button', text: '0,5 s später', onClick: () => nudge(inputs.end, 500) }),
+            el('button', { type: 'button', class: 'button', text: 'Aus Spotify übernehmen', onClick: () => takeFromSpotify('end') }),
+          ]),
+          el('div', { class: 'editor__row' }, [
+            el('button', { type: 'button', class: 'button', text: 'Ende vorhören', onClick: () => preview('end') }),
+          ]),
+          durationHint,
           el('span', {
             class: 'field__hint',
-            text: 'Tipp: Song in Spotify an der richtigen Stelle pausieren, dann "Aus Spotify übernehmen".',
+            text: 'Tipp: Song in Spotify an der gewünschten Stelle pausieren, dann "Aus Spotify übernehmen". Das Ausblenden endet genau am Endpunkt.',
           }),
         ]),
-        field('Dauer in Sekunden', inputs.duration, '0 heißt: läuft, bis du stoppst'),
         field('Ausblenden in Sekunden', inputs.fade),
         field('Lautstärke in Prozent', inputs.volume, 'Wirkt nur auf Geräten mit Lautstärkesteuerung'),
         el('label', { class: 'field field--check' }, [inputs.verified, el('span', { text: 'Startpunkt geprüft' })]),
@@ -592,10 +697,12 @@ export class App {
       ]),
     );
     dialog.addEventListener('close', () => {
-      if (this.controller.isActive(draft.id)) this.run(() => this.controller.stop());
+      const { current } = this.controller.snapshot();
+      if (current?.categoryId === 'preview') this.run(() => this.controller.stop());
       dialog.remove();
     });
     document.body.append(dialog);
+    updateDurationHint();
     dialog.showModal();
   }
 
@@ -632,7 +739,8 @@ export class App {
   }
 
   logout() {
-    this.controller.stop({ fade: false }).catch(() => {});
+    this.controller.stopIdleWatch();
+    this.controller.stop({ fade: false, keepAlive: false }).catch(() => {});
     this.auth.logout();
     this.renderSetup();
   }

@@ -7,7 +7,7 @@ import { STORAGE_KEYS } from './config.js';
 import { createDefaultBoard } from './defaultBoard.js';
 import { validateBoard } from './logic.js';
 
-const DEFAULT_SETTINGS = { deviceId: null, masterVolume: 100, rotation: {} };
+const DEFAULT_SETTINGS = { deviceId: null, masterVolume: 100, rotation: {}, keepAlive: false, idleUri: '' };
 
 function read(storage, key) {
   try {

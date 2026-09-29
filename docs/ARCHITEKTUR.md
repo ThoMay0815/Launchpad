@@ -123,7 +123,7 @@ Die Belegung ist ein JSON-Dokument und wird im localStorage gespeichert sowie al
 
 `durationMs` gleich 0 bedeutet: läuft bis zum manuellen Stopp. `uri` kann ein Track, eine Playlist oder ein Album sein. Die Kategorie-`id` bestimmt die Position im Raster (CSS `grid-area`). Unbekannte IDs werden automatisch angehängt.
 
-Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand) liegen getrennt unter `hlp.settings`, damit ein Import der Belegung sie nicht überschreibt.
+Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand, Wach halten, Stille-Track) liegen getrennt unter `hlp.settings`, damit ein Import der Belegung sie nicht überschreibt.
 
 ## Architekturentscheidungen
 
@@ -137,6 +137,10 @@ Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand) liegen getrennt unter 
 
 **Abbruch per token.** Jede Aktion erhöht einen Zähler. Ausblenden, Auto-Stopp und Polling prüfen vor jedem Schritt, ob sie noch aktuell sind. Das verhindert den typischen Fehler, dass ein altes Ausblenden den neuen Tor-Clip nachträglich pausiert. Ein Test deckt genau diesen Fall ab.
 
+**Wach halten per Stille-Track.** iOS legt die Spotify-App im Hintergrund schlafen, sobald sie keinen Ton abspielt, und sie verschwindet als Spotify-Gerät. Statt zu pausieren spielt der Controller im Leerlauf einen stillen Track. Ein Wächter (alle 20 Sekunden, nur im Leerlauf) startet ihn neu, wenn er pausiert ist oder weniger als 90 Sekunden Restzeit hat. Die Entscheidung trifft die reine Funktion `idleAction` in `logic.js`. Gegen Wettlauf: Der Wächter merkt sich das token vor der Abfrage und verwirft sein Ergebnis, wenn inzwischen eine Taste gedrückt wurde. Bewusst ohne Wiederholungsmodus in Spotify, denn der müsste vor jedem Clip wieder abgeschaltet werden und würde jeden Start um einen Befehl verzögern.
+
+**Endpunkt statt Dauer im Editor.** Musikalisch denkt man in Schnittpunkten, nicht in Sekunden. Der Editor zeigt deshalb Start und Ende als Songposition. Gespeichert wird weiterhin `durationMs`, damit das Datenformat und exportierte Belegungen kompatibel bleiben.
+
 **Leere Spotify-Links in der Vorbelegung.** Song-IDs werden nicht geraten, sondern im Editor aus Spotify übernommen. Unterschiedliche Versionen eines Songs haben unterschiedliche Zeiten, deshalb gehört die ID zur geprüften Version.
 
 **Keine Abhängigkeiten.** Weniger Angriffsfläche, strenge Content-Security-Policy möglich, kein Build-Schritt, lange wartungsfrei.
@@ -147,12 +151,14 @@ Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand) liegen getrennt unter 
 |---|---|
 | Access Token abgelaufen (401) | einmal erneuern und Anfrage wiederholen |
 | Refresh Token ungültig (`invalid_grant`) | abmelden, Einrichtungsseite zeigen |
-| Kein aktives Gerät (404) | verständliche Meldung, Geräteliste neu laden |
+| Kein aktives Gerät (404) | verständliche Meldung mit Hinweis auf Wach halten, Geräteliste neu laden |
+| Vorübergehender Serverfehler (500, 502, 503, 504) | nach 300 ms einmal wiederholen, danach Meldung „Nochmal tippen“ |
 | Lautstärke nicht erlaubt (403) | harter Stopp, einmalige Meldung |
 | Pause auf bereits pausiertem Gerät (403) | ignorieren |
 | Zu viele Anfragen (429) | Meldung, erneut tippen |
 | Keine Verbindung, Zeitüberschreitung (8 s) | Meldung, Zustand zurücksetzen |
-| Song ohne feste Dauer endet in Spotify | Polling alle 10 Sekunden erkennt es und setzt die Taste zurück |
+| Song ohne feste Dauer endet in Spotify | Polling alle 10 Sekunden erkennt es, setzt die Taste zurück und startet die Stille |
+| Spotify im Leerlauf pausiert oder Stille läuft aus | Wächter startet den Stille-Track neu |
 
 ## Sicherheit und Datenschutz
 
@@ -167,5 +173,7 @@ Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand) liegen getrennt unter 
 **Eigene Audiodateien (LocalEngine).** Der `PlaybackController` spricht nur mit einem Objekt, das `play`, `pause`, `setVolume` und `getPlayback` anbietet. Eine lokale Engine auf Basis der Web Audio API (vorab dekodierte Puffer, ein Gain-Knoten pro Clip für echtes Ausblenden, Dateien im IndexedDB-Speicher) kann diese Schnittstelle bedienen. Oberfläche, Rotation, Editor und Tests bleiben. Das Datenmodell braucht dann zusätzlich eine Referenz auf die lokale Datei.
 
 **Spieler-Torhymnen.** Eine weitere Kategorie mit Rückennummern als Chips. Technisch nichts Neues, eher eine Frage der Bedienung unter Zeitdruck.
+
+**Web Playback SDK als Alternative.** Das SDK macht die Webseite selbst zum Spotify-Player. Dann entfällt die Abhängigkeit von der Spotify-App im Hintergrund. Offizielle Unterstützung für iOS ist dokumentiert, aber mit Einschränkungen, und Berichte aus der Community zu Safari sind durchwachsen. Ein Experiment wäre eine zusätzliche Engine hinter derselben Client-Schnittstelle.
 
 **Offline-Start.** Ein Service Worker könnte die App-Dateien zwischenspeichern. Für Spotify bringt das wenig, weil die Steuerung ohnehin Internet braucht. Für die LocalEngine ist es wichtig.

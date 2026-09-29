@@ -86,7 +86,9 @@ summary {
   border: 1.5px solid var(--line-mid);
   border-radius: 10px;
   background: transparent;
+  color: inherit;
   font-weight: 600;
+  text-decoration: none;
   white-space: nowrap;
 }
 
@@ -137,10 +139,13 @@ summary {
 
 .topbar__group {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .topbar__device {
+  min-width: 0;
   min-height: 44px;
   max-width: 260px;
   padding: 8px 12px;

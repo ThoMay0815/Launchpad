@@ -197,3 +197,32 @@ export function validateBoard(board) {
   });
   return errors;
 }
+
+/**
+ * Entscheidet im Leerlauf, ob der Stille-Track (neu) gestartet werden muss.
+ * Läuft in Spotify gerade ein anderer Song, bleibt er unangetastet.
+ * @param {object | null} state Antwort von GET /me/player
+ * @param {string} idleUri URI des Stille-Tracks
+ * @returns {'start' | 'none'}
+ */
+export function idleAction(state, idleUri, marginMs = 90_000) {
+  if (!state || !state.item) return 'start';
+  if (state.item.uri !== idleUri) return state.is_playing ? 'none' : 'start';
+  if (!state.is_playing) return 'start';
+  const remaining = (state.item.duration_ms ?? 0) - (state.progress_ms ?? 0);
+  return remaining < marginMs ? 'start' : 'none';
+}
+
+/**
+ * Rechnet einen Endpunkt (absolute Songposition) in eine Clip-Dauer um.
+ * Leeres Ende bedeutet: läuft bis zum Stopp.
+ * @returns {{durationMs: number} | {error: string}}
+ */
+export function durationFromEnd(startMs, endText) {
+  const text = typeof endText === 'string' ? endText.trim() : '';
+  if (!text || text === '0') return { durationMs: 0 };
+  const endMs = parseTime(text);
+  if (endMs === null) return { error: 'Ende bitte als m:ss angeben, z. B. 1:12, oder leer lassen.' };
+  if (endMs <= startMs) return { error: 'Das Ende muss nach dem Start liegen.' };
+  return { durationMs: endMs - startMs };
+}
