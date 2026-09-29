@@ -1,0 +1,11 @@
+{
+  "name": "Handball Launchpad",
+  "short_name": "Launchpad",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1B4079",
+  "theme_color": "#1B4079",
+  "lang": "de"
+}

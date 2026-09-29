@@ -1,0 +1,602 @@
+/*
+  Gestaltung: Hallenboden-Blau, weiße Spielfeldlinien, rot-weiße Torpfosten.
+  Das einzige auffällige Element ist die Tor-Taste im Pfostenrahmen. Alles andere bleibt ruhig,
+  damit man unter Stress schnell die richtige Taste trifft.
+*/
+
+:root {
+  --court: #1b4079;
+  --court-deep: #122b53;
+  --line: #f3f5f7;
+  --post-red: #d62839;
+  --signal: #f5b700;
+  --muted: #a9b8cf;
+  --line-soft: rgba(243, 245, 247, 0.22);
+  --line-mid: rgba(243, 245, 247, 0.5);
+  --font: "Avenir Next Condensed", "Avenir Next", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--court);
+  color: var(--line);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.35;
+  -webkit-text-size-adjust: 100%;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+summary {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* Knöpfe */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 10px;
+  background: transparent;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.button--primary {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--court-deep);
+  font-weight: 700;
+}
+
+.button--active {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: #1d1d1d;
+}
+
+.button--danger {
+  border-color: var(--post-red);
+  color: #ffb3ba;
+}
+
+.button--stop {
+  margin-left: auto;
+  min-height: 56px;
+  padding: 10px 24px;
+  background: var(--post-red);
+  border-color: var(--post-red);
+  font-size: 21px;
+  font-weight: 800;
+}
+
+.button.is-holding {
+  background: rgba(245, 183, 0, 0.3);
+  transition: background 0.8s linear;
+}
+
+/* Statusleiste, unten abgeschlossen wie eine Mittellinie */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  background: var(--court-deep);
+  border-bottom: 3px solid var(--line);
+}
+
+.topbar__group {
+  display: flex;
+  gap: 8px;
+}
+
+.topbar__device {
+  min-height: 44px;
+  max-width: 260px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 10px;
+  background: var(--court);
+}
+
+.topbar__hint,
+.topbar__latency {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.topbar__master {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
+.topbar__master input {
+  width: 140px;
+  accent-color: var(--signal);
+}
+
+.menu {
+  position: relative;
+}
+
+.menu summary {
+  list-style: none;
+}
+
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  display: grid;
+  gap: 6px;
+  min-width: 230px;
+  padding: 8px;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 12px;
+  background: var(--court-deep);
+}
+
+/* Spielfeld aus Kacheln */
+
+.board {
+  flex: 1;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr auto;
+  grid-template-areas:
+    "tor parade fairplay"
+    "tor mitmachen auszeit"
+    "einlauf halbzeit schluss";
+}
+
+.tile--tor { grid-area: tor; }
+.tile--parade { grid-area: parade; }
+.tile--fairplay { grid-area: fairplay; }
+.tile--mitmachen { grid-area: mitmachen; }
+.tile--auszeit { grid-area: auszeit; }
+.tile--einlauf { grid-area: einlauf; }
+.tile--halbzeit { grid-area: halbzeit; }
+.tile--schluss { grid-area: schluss; }
+
+.tile {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  border: 2px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--court-deep);
+}
+
+.tile__inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: inherit;
+}
+
+.tile__main {
+  flex: 1;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+  min-height: 84px;
+  padding: 12px 14px 8px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  text-align: left;
+}
+
+.tile__name {
+  font-size: clamp(26px, 3.2vw, 40px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.tile__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.tile__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__time {
+  font-variant-numeric: tabular-nums;
+}
+
+.tile__progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line-soft);
+}
+
+.tile__bar {
+  display: block;
+  height: 100%;
+  background: var(--signal);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.tile__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 12px;
+}
+
+.chip {
+  max-width: 100%;
+  min-height: 38px;
+  padding: 6px 12px;
+  overflow: hidden;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip--missing {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.chip--add {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.board--editing .chip--unverified::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--signal);
+  vertical-align: middle;
+}
+
+.chip.is-playing {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: #1d1d1d;
+}
+
+.tile.is-playing {
+  border-color: var(--signal);
+}
+
+.tile.is-playing .tile__line {
+  color: var(--signal);
+}
+
+.tile.is-fading .tile__bar {
+  background: var(--muted);
+}
+
+/* Fair-Play bewusst zurückhaltender */
+
+.tile--fairplay .tile__name {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Die Tor-Taste: Pfosten und Latte in Rot-Weiß, innen ein angedeutetes Netz, unten offen wie ein echtes Tor */
+
+.tile--tor {
+  padding: 14px 14px 0;
+  border: 0;
+  border-radius: 4px 4px 0 0;
+  background:
+    repeating-linear-gradient(90deg, var(--post-red) 0 32px, var(--line) 32px 64px) left top / 100% 14px no-repeat,
+    repeating-linear-gradient(180deg, var(--post-red) 0 32px, var(--line) 32px 64px) left top / 14px 100% no-repeat,
+    repeating-linear-gradient(180deg, var(--post-red) 0 32px, var(--line) 32px 64px) right top / 14px 100% no-repeat,
+    var(--court);
+}
+
+.tile--tor .tile__inner {
+  border-radius: 0;
+  background-color: var(--court-deep);
+  background-image:
+    repeating-linear-gradient(45deg, rgba(243, 245, 247, 0.06) 0 1px, transparent 1px 20px),
+    repeating-linear-gradient(-45deg, rgba(243, 245, 247, 0.06) 0 1px, transparent 1px 20px);
+}
+
+.tile--tor .tile__name {
+  font-size: clamp(64px, 9vw, 128px);
+  letter-spacing: 0.01em;
+}
+
+.tile--tor.is-playing .tile__inner {
+  box-shadow: inset 0 0 0 3px var(--signal);
+}
+
+/* Hochformat iPad: zwei Spalten */
+
+@media (max-width: 1024px) and (orientation: portrait) {
+  .board {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "tor tor"
+      "parade fairplay"
+      "mitmachen auszeit"
+      "einlauf halbzeit"
+      "schluss schluss";
+  }
+
+  .tile--tor {
+    min-height: 240px;
+  }
+}
+
+/* iPhone: eine Spalte */
+
+@media (max-width: 600px) {
+  .board {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "tor"
+      "parade"
+      "fairplay"
+      "mitmachen"
+      "auszeit"
+      "einlauf"
+      "halbzeit"
+      "schluss";
+  }
+
+  .topbar__hint,
+  .topbar__latency {
+    width: 100%;
+  }
+
+  .button--stop {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+/* Einrichtung */
+
+.setup {
+  width: min(640px, 100%);
+  margin: 0 auto;
+  padding: 32px 20px;
+}
+
+.setup h1 {
+  margin: 0 0 8px;
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.setup__steps {
+  display: grid;
+  gap: 20px;
+  padding-left: 1.2em;
+}
+
+.setup__steps li {
+  display: grid;
+  gap: 8px;
+}
+
+.setup__uri {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--court-deep);
+  word-break: break-all;
+}
+
+.setup input {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 10px;
+  background: var(--court-deep);
+}
+
+/* Clip-Editor */
+
+.editor {
+  width: min(600px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 20px;
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: var(--court-deep);
+  color: var(--line);
+}
+
+.editor::backdrop {
+  background: rgba(10, 22, 44, 0.72);
+}
+
+.editor__title {
+  margin: 0 0 16px;
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.editor__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.field--wide {
+  grid-column: 1 / -1;
+}
+
+.field--check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field--check input {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--signal);
+}
+
+.field__label {
+  font-weight: 700;
+}
+
+.field__hint {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.field input[type="text"],
+.field input[type="number"] {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line-mid);
+  border-radius: 10px;
+  background: var(--court);
+}
+
+.editor__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor__row input {
+  width: 110px;
+}
+
+.editor__error {
+  min-height: 1.3em;
+  color: #ffb3ba;
+}
+
+.editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 600px) {
+  .editor__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Meldungen */
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: grid;
+  gap: 8px;
+  width: min(560px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--line);
+  color: var(--court-deep);
+  font-weight: 600;
+}
+
+.toast--error {
+  background: var(--post-red);
+  color: var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}
