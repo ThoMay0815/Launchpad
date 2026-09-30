@@ -83,15 +83,15 @@ Das Abspielgerät wird per Bluetooth oder Kabel mit der Box verbunden. Die Gerä
 
 **Einrichten:**
 
-1. In Spotify nach „silence“ oder „Stille“ suchen und einen Track wählen, der **mindestens 5, besser 60 Minuten** lang ist.
-2. **Mit Kopfhörern bei voller Lautstärke prüfen**, dass wirklich nichts zu hören ist. Manche „Stille“-Tracks enthalten Rauschen oder Raumklang.
+1. In Spotify nach „silence“ oder „Stille“ suchen. Lange, wirklich stille Tracks sind selten, weil Spotify reine Stille-Alben in der Vergangenheit entfernt hat. Der Track sollte **mindestens etwa 2 Minuten** lang sein. Sehr kurze Tracks von wenigen Sekunden funktionieren nicht zuverlässig, weil der Wächter nur alle 20 Sekunden prüft. Ein möglicher Kandidat ist John Cage, „4'33“, von dem es viele Aufnahmen gibt.
+2. **Mit Kopfhörern bei voller Lautstärke prüfen**, dass wirklich nichts zu hören ist. Manche „Stille“-Tracks enthalten Rauschen oder Raumklang, auch viele Aufnahmen von „4'33“.
 3. Den Track in Spotify **herunterladen**.
 4. Im Launchpad unter „Mehr“ auf „Stille-Track festlegen“ tippen und den Link einfügen.
 5. Unter „Mehr“ „Wach halten einschalten“ wählen. Die Statusleiste zeigt „Wach halten an“.
 
 **Zu beachten:**
 
-- Im Bearbeitungsmodus ist Wach halten automatisch aus, damit die Stille nicht dein Suchen nach Start- und Endpunkten in Spotify überschreibt.
+- Wach halten gilt auch im Bearbeitungsmodus. Nach dem Vorhören läuft wieder die Stille. Einen Song, den du in Spotify pausiert hast, um eine Stelle zu suchen, lässt der Wächter im Bearbeitungsmodus aber stehen. Sobald du „Aus Spotify übernehmen“ tippst, ist die Position gesichert und die Stille startet sofort wieder.
 - Läuft in Spotify ein anderer Song, den du selbst gestartet hast, lässt der Wächter ihn in Ruhe.
 - Nebeneffekte: etwas mehr Akkuverbrauch, und die Stille taucht in deinem Spotify-Verlauf auf. Ein Vorteil: Viele Bluetooth-Boxen schalten sich bei Stille-Wiedergabe nicht in den Standby.
 - Wacht Spotify trotzdem nicht auf, hilft „Spotify öffnen“ in der Statusleiste. Nach der Rückkehr lädt das Launchpad die Geräte automatisch neu.
@@ -99,8 +99,8 @@ Das Abspielgerät wird per Bluetooth oder Kabel mit der Box verbunden. Die Gerä
 ## Clips einrichten
 
 1. „Bearbeiten (halten)“ etwa eine Sekunde gedrückt halten. Ein gelber Punkt zeigt Clips, deren Startpunkt noch nicht geprüft ist. Gestrichelte Clips haben noch keinen Link.
-2. Einen Clip antippen. Der schnellste Weg: In Spotify den Song bis zur gewünschten Stelle spielen und pausieren, dann beim **Startpunkt** „Aus Spotify übernehmen“. Song, Titel und Position werden übernommen.
-3. Genauso den **Endpunkt** setzen: in Spotify weiterspielen, an der Endstelle pausieren, beim Endpunkt „Aus Spotify übernehmen“. Unter dem Feld steht die berechnete Dauer. Endpunkt leer lassen heißt: läuft, bis du stoppst.
+2. Einen Clip antippen. Der schnellste Weg: den Song in Spotify starten, zurück ins Launchpad wechseln und **im richtigen Moment, während der Song läuft,** beim **Startpunkt** „Aus Spotify übernehmen“ tippen. Song, Titel und Position werden übernommen. Pausieren in Spotify geht auch, dann aber zügig übernehmen, weil iOS eine pausierte Spotify-App nach wenigen Sekunden schlafen legen kann.
+3. Genauso den **Endpunkt** setzen: Song weiterlaufen lassen und an der Endstelle beim Endpunkt „Aus Spotify übernehmen“ tippen. Unter dem Feld steht die berechnete Dauer. Endpunkt leer lassen heißt: läuft, bis du stoppst.
 4. Mit „Vorhören oder stoppen“ den ganzen Clip prüfen, mit „Ende vorhören“ nur die letzten drei Sekunden. Beide Punkte lassen sich mit „0,5 s früher“ und „0,5 s später“ feinjustieren. Meist passt ein Start eine halbe Sekunde vor dem Höhepunkt am besten, weil die Verzögerung den Rest frisst. Das Ausblenden endet genau am Endpunkt.
 5. „Startpunkt geprüft“ anhaken und speichern.
 6. Danach über „Mehr“ die Belegung exportieren. Das ist dein Backup.
@@ -122,7 +122,7 @@ Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5
 Voraussetzung ist Node.js ab Version 18, sonst nichts.
 
 ```bash
-npm test        # 38 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
+npm test        # 43 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
 npm run check   # Syntaxprüfung aller Module
 ```
 

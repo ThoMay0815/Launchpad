@@ -203,11 +203,17 @@ export function validateBoard(board) {
  * Läuft in Spotify gerade ein anderer Song, bleibt er unangetastet.
  * @param {object | null} state Antwort von GET /me/player
  * @param {string} idleUri URI des Stille-Tracks
+ * @param {number} marginMs Neustart, wenn die Stille weniger Restzeit hat
+ * @param {{keepForeign?: boolean}} options keepForeign: einen fremden Song auch pausiert
+ *   stehen lassen. Im Bearbeitungsmodus wichtig, weil du dort gerade eine Stelle suchst.
  * @returns {'start' | 'none'}
  */
-export function idleAction(state, idleUri, marginMs = 90_000) {
+export function idleAction(state, idleUri, marginMs = 90_000, { keepForeign = false } = {}) {
   if (!state || !state.item) return 'start';
-  if (state.item.uri !== idleUri) return state.is_playing ? 'none' : 'start';
+  if (state.item.uri !== idleUri) {
+    if (keepForeign) return 'none';
+    return state.is_playing ? 'none' : 'start';
+  }
   if (!state.is_playing) return 'start';
   const remaining = (state.item.duration_ms ?? 0) - (state.progress_ms ?? 0);
   return remaining < marginMs ? 'start' : 'none';

@@ -32,6 +32,7 @@ export class PlaybackController extends EventTarget {
    * @param {() => Device | null} options.getDevice
    * @param {() => number} options.getMasterVolume
    * @param {() => string | null} [options.getIdleUri] Stille-Track oder null, wenn Wach halten aus ist
+   * @param {() => boolean} [options.isEditing] true im Bearbeitungsmodus, dann bleibt ein fremder Song stehen
    * @param {(d: Device) => void} [options.onVolumeUnsupported]
    */
   constructor(
@@ -40,6 +41,7 @@ export class PlaybackController extends EventTarget {
       getDevice,
       getMasterVolume,
       getIdleUri = () => null,
+      isEditing = () => false,
       onVolumeUnsupported = () => {},
       pollIntervalMs = POLL_INTERVAL_MS,
       idleCheckMs = IDLE_CHECK_MS,
@@ -50,6 +52,7 @@ export class PlaybackController extends EventTarget {
     this.getDevice = getDevice;
     this.getMasterVolume = getMasterVolume;
     this.getIdleUri = getIdleUri;
+    this.isEditing = isEditing;
     this.onVolumeUnsupported = onVolumeUnsupported;
     this.pollIntervalMs = pollIntervalMs;
     this.idleCheckMs = idleCheckMs;
@@ -272,8 +275,20 @@ export class PlaybackController extends EventTarget {
     const token = this.token;
     const state = await this.client.getPlayback();
     if (token !== this.token || this.phase !== 'idle') return;
-    if (idleAction(state, idleUri, IDLE_RESTART_MARGIN_MS) === 'start') {
+    if (idleAction(state, idleUri, IDLE_RESTART_MARGIN_MS, { keepForeign: this.isEditing() }) === 'start') {
       await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
     }
+  }
+
+  /**
+   * Startet die Stille sofort, ohne vorher nachzufragen.
+   * Gedacht für den Moment direkt nach "Aus Spotify übernehmen": Die Position ist gesichert,
+   * der pausierte Song wird nicht mehr gebraucht, und Spotify soll nicht einschlafen.
+   */
+  async resumeIdle() {
+    const idleUri = this.getIdleUri();
+    const device = this.getDevice();
+    if (!idleUri || !device || this.phase !== 'idle') return;
+    await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
   }
 }

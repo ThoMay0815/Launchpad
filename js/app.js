@@ -56,8 +56,10 @@ export class App {
     this.controller = new PlaybackController(this.client, {
       getDevice: () => this.device,
       getMasterVolume: () => this.settings.masterVolume,
-      // Im Bearbeitungsmodus bleibt Wach halten aus, damit Stille nicht dein manuelles Suchen in Spotify überschreibt.
-      getIdleUri: () => (this.settings.keepAlive && !this.editMode && this.settings.idleUri) || null,
+      // Wach halten gilt auch im Bearbeitungsmodus. Dort lässt der Wächter aber einen fremden,
+      // pausierten Song stehen, damit er die Stelle nicht überschreibt, die du gerade in Spotify suchst.
+      getIdleUri: () => (this.settings.keepAlive && this.settings.idleUri) || null,
+      isEditing: () => this.editMode,
       onVolumeUnsupported: () => {
         this.toast('Dieses Gerät erlaubt keine Lautstärkesteuerung. Clips stoppen deshalb ohne Ausblenden.');
         this.renderStatus();
@@ -598,6 +600,9 @@ export class App {
           this.toast('Endpunkt übernommen.');
         }
         updateDurationHint();
+        // War der Song in Spotify pausiert, würde iOS die App gleich schlafen legen.
+        // Die Position ist gesichert, also sofort zurück zur Stille.
+        if (!state.is_playing) this.controller.resumeIdle().catch((err) => this.handleError(err));
       } catch (err) {
         this.handleError(err);
       }
@@ -681,7 +686,7 @@ export class App {
           durationHint,
           el('span', {
             class: 'field__hint',
-            text: 'Tipp: Song in Spotify an der gewünschten Stelle pausieren, dann "Aus Spotify übernehmen". Das Ausblenden endet genau am Endpunkt.',
+            text: 'Tipp: Song in Spotify laufen lassen und im richtigen Moment "Aus Spotify übernehmen" tippen. Pausieren geht auch, dann startet danach die Stille. Das Ausblenden endet genau am Endpunkt.',
           }),
         ]),
         field('Ausblenden in Sekunden', inputs.fade),

@@ -440,3 +440,64 @@ describe('SpotifyClient Serverfehler', () => {
     await assert.rejects(broken.pause('dev'), (err) => err.status === 502 && /Nochmal tippen/.test(err.message));
   });
 });
+
+describe('Wach halten im Bearbeitungsmodus', () => {
+  const IDLE = `spotify:track:${'S'.repeat(22)}`;
+  const FOREIGN = `spotify:track:${TRACK_ID}`;
+
+  function makeEditingController(client, editing = true) {
+    const device = { id: 'dev', name: 'iPhone', supportsVolume: false, volume: null };
+    const controller = new PlaybackController(client, {
+      getDevice: () => device,
+      getMasterVolume: () => 100,
+      getIdleUri: () => IDLE,
+      isEditing: () => editing,
+      idleCheckMs: 20,
+    });
+    controller.setDevice(device);
+    return controller;
+  }
+
+  test('idleAction lässt mit keepForeign einen pausierten fremden Song stehen', () => {
+    const paused = { is_playing: false, item: { uri: FOREIGN } };
+    assert.equal(idleAction(paused, IDLE, 90_000, { keepForeign: true }), 'none');
+    assert.equal(idleAction(paused, IDLE, 90_000), 'start');
+    assert.equal(idleAction(null, IDLE, 90_000, { keepForeign: true }), 'start');
+  });
+
+  test('der Wächter überschreibt beim Bearbeiten nicht die gesuchte Stelle', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => ({ is_playing: false, item: { uri: FOREIGN } });
+    const controller = makeEditingController(client);
+    await controller.checkIdle();
+    assert.deepEqual(client.calls, []);
+  });
+
+  test('ohne Bearbeitungsmodus übernimmt die Stille einen pausierten Song', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => ({ is_playing: false, item: { uri: FOREIGN } });
+    const controller = makeEditingController(client, false);
+    await controller.checkIdle();
+    assert.deepEqual(client.calls, [`play:${IDLE}@0`]);
+  });
+
+  test('ein Stopp nach dem Vorhören geht auch beim Bearbeiten in die Stille', async () => {
+    const client = new FakeClient();
+    const controller = makeEditingController(client);
+    await controller.play('preview', clipA);
+    await controller.stop();
+    assert.equal(client.calls.at(-1), `play:${IDLE}@0`);
+  });
+
+  test('resumeIdle startet die Stille sofort, aber nicht während ein Clip läuft', async () => {
+    const client = new FakeClient();
+    const controller = makeEditingController(client);
+    await controller.resumeIdle();
+    assert.deepEqual(client.calls, [`play:${IDLE}@0`]);
+    await controller.play('preview', clipB);
+    const before = client.calls.length;
+    await controller.resumeIdle();
+    assert.equal(client.calls.length, before);
+    await controller.stop({ fade: false, keepAlive: false });
+  });
+});
