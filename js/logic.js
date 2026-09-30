@@ -133,11 +133,16 @@ export function buildFadeSteps(fromVolume, fadeMs, steps = 6) {
 }
 
 /**
- * Ab wann nach dem Start das automatische Ausblenden beginnt.
+ * Ab wann nach dem Start das automatische Stoppen beginnt.
+ * Kann das Gerät ausblenden, beginnt das Ausblenden so früh, dass es genau am Endpunkt endet.
+ * Kann es das nicht (z. B. iPhone), wird exakt am Endpunkt hart gestoppt. Die Ausblendzeit
+ * darf dann nicht abgezogen werden, sonst fehlt am Ende genau dieses Stück.
+ * @param {{canFade?: boolean}} options
  * @returns {number | null} null bei Clips ohne feste Dauer
  */
-export function stopDelayMs(clip) {
+export function stopDelayMs(clip, { canFade = true } = {}) {
   if (!(clip.durationMs > 0)) return null;
+  if (!canFade) return clip.durationMs;
   return Math.max(0, clip.durationMs - Math.max(0, clip.fadeMs || 0));
 }
 

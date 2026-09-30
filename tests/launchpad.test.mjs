@@ -126,6 +126,11 @@ describe('Ausblenden und Lautstärke', () => {
     assert.equal(scaledVolume('x', 100), 0);
   });
 
+  test('ohne Ausblenden wird genau am Endpunkt gestoppt, nicht vorher', () => {
+    assert.equal(stopDelayMs({ durationMs: 7000, fadeMs: 1500 }, { canFade: false }), 7000);
+    assert.equal(stopDelayMs({ durationMs: 0, fadeMs: 1500 }, { canFade: false }), null);
+  });
+
   test('Auto-Stopp beginnt so, dass das Ausblenden mit der Dauer endet', () => {
     assert.equal(stopDelayMs({ durationMs: 7000, fadeMs: 1500 }), 5500);
     assert.equal(stopDelayMs({ durationMs: 1000, fadeMs: 1500 }), 0);
@@ -499,5 +504,28 @@ describe('Wach halten im Bearbeitungsmodus', () => {
     await controller.resumeIdle();
     assert.equal(client.calls.length, before);
     await controller.stop({ fade: false, keepAlive: false });
+  });
+});
+
+describe('Endpunkt auf Geräten ohne Lautstärkesteuerung', () => {
+  test('der Clip läuft bis zum Endpunkt, die Ausblendzeit wird nicht abgeschnitten', async () => {
+    const client = new FakeClient();
+    const { controller } = makeController(client, { supportsVolume: false });
+    await controller.play('tor', { ...clipA, durationMs: 80, fadeMs: 60 });
+    await sleep(40);
+    assert.equal(controller.phase, 'playing', 'nach 40 ms darf noch nicht gestoppt sein');
+    await sleep(80);
+    assert.equal(controller.phase, 'idle');
+    assert.equal(client.calls.at(-1), 'pause');
+  });
+
+  test('mit Lautstärkesteuerung beginnt das Ausblenden vor dem Endpunkt', async () => {
+    const client = new FakeClient();
+    const { controller } = makeController(client);
+    await controller.play('tor', { ...clipA, durationMs: 80, fadeMs: 60 });
+    await sleep(40);
+    assert.equal(controller.phase, 'fading');
+    await sleep(120);
+    assert.equal(controller.phase, 'idle');
   });
 });

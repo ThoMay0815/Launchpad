@@ -111,7 +111,8 @@ export class PlaybackController extends EventTarget {
     this.current.startedAt = performance.now();
     this.setPhase('playing');
 
-    const delay = stopDelayMs(clip);
+    // supportsVolume erst hier lesen: applyVolume kann es beim Start auf false gesetzt haben.
+    const delay = stopDelayMs(clip, { canFade: Boolean(device.supportsVolume) });
     if (delay === null) {
       this.startPolling(token);
     } else {

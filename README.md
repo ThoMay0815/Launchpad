@@ -101,7 +101,7 @@ Das Abspielgerät wird per Bluetooth oder Kabel mit der Box verbunden. Die Gerä
 1. „Bearbeiten (halten)“ etwa eine Sekunde gedrückt halten. Ein gelber Punkt zeigt Clips, deren Startpunkt noch nicht geprüft ist. Gestrichelte Clips haben noch keinen Link.
 2. Einen Clip antippen. Der schnellste Weg: den Song in Spotify starten, zurück ins Launchpad wechseln und **im richtigen Moment, während der Song läuft,** beim **Startpunkt** „Aus Spotify übernehmen“ tippen. Song, Titel und Position werden übernommen. Pausieren in Spotify geht auch, dann aber zügig übernehmen, weil iOS eine pausierte Spotify-App nach wenigen Sekunden schlafen legen kann.
 3. Genauso den **Endpunkt** setzen: Song weiterlaufen lassen und an der Endstelle beim Endpunkt „Aus Spotify übernehmen“ tippen. Unter dem Feld steht die berechnete Dauer. Endpunkt leer lassen heißt: läuft, bis du stoppst.
-4. Mit „Vorhören oder stoppen“ den ganzen Clip prüfen, mit „Ende vorhören“ nur die letzten drei Sekunden. Beide Punkte lassen sich mit „0,5 s früher“ und „0,5 s später“ feinjustieren. Meist passt ein Start eine halbe Sekunde vor dem Höhepunkt am besten, weil die Verzögerung den Rest frisst. Das Ausblenden endet genau am Endpunkt.
+4. Mit „Vorhören oder stoppen“ den ganzen Clip prüfen, mit „Ende vorhören“ nur die letzten vier Sekunden. Beide Punkte lassen sich mit „0,5 s früher“ und „0,5 s später“ feinjustieren. Meist passt ein Start eine halbe Sekunde vor dem Höhepunkt am besten, weil die Verzögerung den Rest frisst. Kann das Gerät ausblenden (Laptop), endet das Ausblenden genau am Endpunkt. Kann es das nicht (iPhone, iPad), stoppt der Clip hart genau am Endpunkt.
 5. „Startpunkt geprüft“ anhaken und speichern.
 6. Danach über „Mehr“ die Belegung exportieren. Das ist dein Backup.
 
@@ -122,7 +122,7 @@ Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5
 Voraussetzung ist Node.js ab Version 18, sonst nichts.
 
 ```bash
-npm test        # 43 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
+npm test        # 46 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
 npm run check   # Syntaxprüfung aller Module
 ```
 

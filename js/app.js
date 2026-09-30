@@ -686,10 +686,10 @@ export class App {
           durationHint,
           el('span', {
             class: 'field__hint',
-            text: 'Tipp: Song in Spotify laufen lassen und im richtigen Moment "Aus Spotify übernehmen" tippen. Pausieren geht auch, dann startet danach die Stille. Das Ausblenden endet genau am Endpunkt.',
+            text: 'Tipp: Song in Spotify laufen lassen und im richtigen Moment "Aus Spotify übernehmen" tippen. Pausieren geht auch, dann startet danach die Stille. Der Clip endet genau am Endpunkt.',
           }),
         ]),
-        field('Ausblenden in Sekunden', inputs.fade),
+        field('Ausblenden in Sekunden', inputs.fade, 'Wirkt nur auf Geräten mit Lautstärkesteuerung. Sonst stoppt der Clip hart am Endpunkt.'),
         field('Lautstärke in Prozent', inputs.volume, 'Wirkt nur auf Geräten mit Lautstärkesteuerung'),
         el('label', { class: 'field field--check' }, [inputs.verified, el('span', { text: 'Startpunkt geprüft' })]),
         field('Notiz', inputs.note, null, true),

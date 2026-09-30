@@ -40,4 +40,4 @@ export const IDLE_CHECK_MS = 20_000;
 export const IDLE_RESTART_MARGIN_MS = 90_000;
 
 /** "Ende vorhören" spielt diese Zeitspanne vor dem Endpunkt. */
-export const END_PREVIEW_MS = 3_000;
+export const END_PREVIEW_MS = 4_000;
