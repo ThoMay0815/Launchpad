@@ -10,6 +10,7 @@ import { PlaybackController } from './player.js';
 import * as store from './store.js';
 import {
   clampVolume,
+  diagnose,
   durationFromEnd,
   formatSeconds,
   formatTime,
@@ -17,7 +18,10 @@ import {
   nextRotationIndex,
   parseSpotifyLink,
   parseTime,
+  pickDevice,
 } from './logic.js';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Kleiner DOM-Baukasten. "onClick" wird zu addEventListener('click'). */
 function el(tag, props = {}, children = []) {
@@ -60,6 +64,7 @@ export class App {
       // pausierten Song stehen, damit er die Stelle nicht überschreibt, die du gerade in Spotify suchst.
       getIdleUri: () => (this.settings.keepAlive && this.settings.idleUri) || null,
       isEditing: () => this.editMode,
+      getContextUri: () => this.settings.contextUri || null,
       onVolumeUnsupported: () => {
         this.toast('Dieses Gerät erlaubt keine Lautstärkesteuerung. Clips stoppen deshalb ohne Ausblenden.');
         this.renderStatus();
@@ -150,6 +155,7 @@ export class App {
     if (this.device) {
       hint = this.device.supportsVolume ? 'Ausblenden aktiv' : 'Kein Ausblenden möglich, Stopp ist hart';
       hint += this.settings.keepAlive && this.settings.idleUri ? '. Wach halten an' : '. Wach halten aus';
+      if (this.settings.contextUri) hint += '. Playlist-Modus an';
     }
 
     const master = this.device?.supportsVolume
@@ -189,6 +195,8 @@ export class App {
           onClick: () => this.toggleKeepAlive(),
         }),
         el('button', { type: 'button', class: 'button', text: 'Stille-Track festlegen', onClick: () => this.chooseIdleTrack() }),
+        el('button', { type: 'button', class: 'button', text: 'Launchpad-Playlist festlegen', onClick: () => this.chooseContextPlaylist() }),
+        el('button', { type: 'button', class: 'button', text: 'Diagnose', onClick: () => this.openDiagnose() }),
         el('button', { type: 'button', class: 'button', text: 'Belegung exportieren', onClick: () => this.exportBoard() }),
         el('button', { type: 'button', class: 'button', text: 'Belegung importieren', onClick: () => fileInput.click() }),
         el('button', { type: 'button', class: 'button', text: 'Von Spotify abmelden', onClick: () => this.logout() }),
@@ -263,6 +271,34 @@ export class App {
       // Nur die Stille beenden. Ein gerade laufender Clip bleibt unangetastet.
       if (this.controller.phase === 'idle') this.run(() => this.controller.stop({ fade: false, keepAlive: false }));
     }
+  }
+
+  /**
+   * Playlist-Modus: Clips starten als "Launchpad-Playlist ab diesem Song". Leer lassen schaltet ihn aus.
+   * Alle Clip-Songs und der Stille-Track müssen in dieser Playlist stehen.
+   */
+  chooseContextPlaylist() {
+    const input = window.prompt(
+      'Spotify-Link zur Launchpad-Playlist (enthält alle Clip-Songs und den Stille-Track). Leer lassen schaltet den Playlist-Modus aus.',
+      this.settings.contextUri || '',
+    );
+    if (input === null) return;
+    if (!input.trim()) {
+      this.settings.contextUri = '';
+      store.saveSettings(this.settings);
+      this.toast('Playlist-Modus ist aus.');
+      this.renderStatus();
+      return;
+    }
+    const link = parseSpotifyLink(input);
+    if (!link || link.type !== 'playlist') {
+      this.toast('Das ist kein gültiger Link zu einer Spotify-Playlist.', 'error');
+      return;
+    }
+    this.settings.contextUri = link.uri;
+    store.saveSettings(this.settings);
+    this.toast('Playlist-Modus ist an.');
+    this.renderStatus();
   }
 
   /** Fragt den Link zum Stille-Track ab. @returns {boolean} true, wenn ein gültiger Track gesetzt wurde */
@@ -458,11 +494,19 @@ export class App {
           volume: device.volume_percent,
           isActive: device.is_active,
         }));
-      const preferred =
-        this.devices.find((device) => device.id === this.settings.deviceId) ||
-        this.devices.find((device) => device.isActive) ||
-        null;
-      this.applyDevice(preferred);
+      const { device, reason } = pickDevice(this.devices, { id: this.settings.deviceId, name: this.settings.deviceName });
+      if (reason === 'missing') {
+        // Nicht auf ein anderes Gerät ausweichen und die gespeicherte Wahl nicht überschreiben.
+        this.applyDevice(null, { remember: false });
+        const name = this.settings.deviceName ? `„${this.settings.deviceName}“` : 'Dein zuletzt gewähltes Gerät';
+        this.toast(`${name} ist gerade nicht erreichbar. Spotify darauf öffnen, dann „Aktualisieren“. Oder oben ein anderes Gerät wählen.`, 'error');
+      } else {
+        this.applyDevice(device);
+        if (reason === 'name') this.toast(`„${device.name}“ hat bei Spotify eine neue Kennung und wurde neu zugeordnet.`);
+        // Sofort die Stille starten, solange Spotify noch wach ist. Der Wächter käme erst nach bis zu
+        // 20 Sekunden, und bis dahin hat iOS die App im Hintergrund längst schlafen gelegt.
+        if (device) this.controller.checkIdle().catch(() => {});
+      }
     } catch (err) {
       this.handleError(err);
     }
@@ -472,13 +516,16 @@ export class App {
   selectDevice(id) {
     this.applyDevice(this.devices.find((device) => device.id === id) || null);
     this.renderStatus();
+    if (this.device) this.controller.checkIdle().catch(() => {});
   }
 
-  applyDevice(device) {
+  /** @param {{remember?: boolean}} options remember false lässt die gespeicherte Wahl unangetastet */
+  applyDevice(device, { remember = true } = {}) {
     this.device = device;
     this.controller.setDevice(device);
-    if (device) {
+    if (device && remember) {
       this.settings.deviceId = device.id;
+      this.settings.deviceName = device.name;
       store.saveSettings(this.settings);
     }
   }
@@ -709,6 +756,115 @@ export class App {
     document.body.append(dialog);
     updateDurationHint();
     dialog.showModal();
+  }
+
+  // Diagnose
+
+  /**
+   * Zeigt, was Spotify tatsächlich meldet: aktives Gerät, Wiedergabe, Lautstärke, Geräteliste.
+   * "Testclip abspielen" startet einen Clip und prüft nach 2,5 Sekunden, ob er wirklich läuft.
+   */
+  openDiagnose() {
+    const dialog = el('dialog', { class: 'editor diagnose', 'aria-label': 'Diagnose' });
+    const results = el('div', { class: 'diagnose__results' }, [el('p', { text: 'Frage Spotify ab …' })]);
+    let busy = false;
+
+    const levelLabel = { ok: 'OK', info: 'Info', warn: 'Achtung', error: 'Fehler' };
+
+    const render = (findings, devices) => {
+      results.replaceChildren(
+        el(
+          'ul',
+          { class: 'diagnose__list' },
+          findings.map((finding) =>
+            el('li', { class: `diagnose__item diagnose__item--${finding.level}` }, [
+              el('strong', { text: `${levelLabel[finding.level]}: ` }),
+              finding.text,
+            ]),
+          ),
+        ),
+        el('h3', { class: 'diagnose__subtitle', text: 'Geräte, die Spotify gerade kennt' }),
+        devices.length
+          ? el(
+              'ul',
+              { class: 'diagnose__devices' },
+              devices.map((device) =>
+                el('li', {
+                  text: [
+                    `${device.name} (${device.type})`,
+                    device.is_active ? 'aktiv' : null,
+                    device.id === this.device?.id ? 'vom Launchpad gesteuert' : null,
+                    Number.isFinite(device.volume_percent) ? `Lautstärke ${device.volume_percent} %` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+                }),
+              ),
+            )
+          : el('p', { text: 'Keine. Spotify auf dem Abspielgerät öffnen.' }),
+      );
+    };
+
+    const check = async (expectedUri = null) => {
+      const [devices, playback] = await Promise.all([this.client.getDevices(), this.client.getPlayback()]);
+      render(
+        diagnose({
+          selected: this.device,
+          devices,
+          playback,
+          expectedUri,
+          idleUri: this.settings.idleUri || null,
+          contextUri: this.settings.contextUri || null,
+        }),
+        devices,
+      );
+    };
+
+    const guarded = (task) => async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        await task();
+      } catch (err) {
+        results.replaceChildren(el('p', { class: 'diagnose__item diagnose__item--error', text: err.message }));
+      } finally {
+        busy = false;
+      }
+    };
+
+    const testClip = guarded(async () => {
+      if (!this.device) throw new Error('Erst oben ein Wiedergabegerät wählen.');
+      const category = this.board.categories.find((item) => item.id === 'tor' && nextRotationIndex(item.clips, -1) !== -1)
+        || this.board.categories.find((item) => nextRotationIndex(item.clips, -1) !== -1);
+      if (!category) throw new Error('Kein Clip mit Spotify-Link vorhanden.');
+      const source = category.clips[nextRotationIndex(category.clips, -1)];
+      const clip = { ...source, id: 'diagnose-test', durationMs: 5000, fadeMs: 0 };
+      results.replaceChildren(el('p', { text: `Spiele „${clip.title}“ und prüfe nach 2,5 Sekunden …` }));
+      await this.controller.play('diagnose', clip);
+      await sleep(2500);
+      await check(parseSpotifyLink(clip.uri).uri);
+    });
+
+    dialog.append(
+      el('h2', { class: 'editor__title', text: 'Diagnose' }),
+      el('p', {
+        class: 'field__hint',
+        text: `Das Launchpad steuert: ${this.device ? `„${this.device.name}“ (${this.device.type})` : 'kein Gerät'}`,
+      }),
+      results,
+      el('div', { class: 'editor__actions' }, [
+        el('button', { type: 'button', class: 'button', text: 'Neu prüfen', onClick: guarded(() => check()) }),
+        el('button', { type: 'button', class: 'button', text: 'Testclip abspielen', onClick: testClip }),
+        el('button', { type: 'button', class: 'button button--primary', text: 'Schließen', onClick: () => dialog.close() }),
+      ]),
+    );
+    dialog.addEventListener('close', () => {
+      if (this.controller.isActive('diagnose-test')) this.run(() => this.controller.stop({ fade: false }));
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    guarded(() => check())();
   }
 
   persistBoard() {

@@ -605,3 +605,34 @@ summary {
     transition: none !important;
   }
 }
+
+/* Diagnose */
+
+.diagnose__list,
+.diagnose__devices {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnose__item {
+  padding: 10px 12px;
+  border-left: 4px solid var(--muted);
+  border-radius: 6px;
+  background: var(--court);
+}
+
+.diagnose__item--ok { border-left-color: #3fbf7f; }
+.diagnose__item--warn { border-left-color: var(--signal); }
+.diagnose__item--error { border-left-color: var(--post-red); }
+
+.diagnose__subtitle {
+  margin: 16px 0 0;
+  font-size: 18px;
+}
+
+.diagnose__devices li {
+  color: var(--muted);
+}

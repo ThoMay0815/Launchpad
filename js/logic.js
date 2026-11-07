@@ -148,14 +148,41 @@ export function stopDelayMs(clip, { canFade = true } = {}) {
 
 /**
  * Anfragekörper für PUT /me/player/play.
- * Einzelne Songs laufen über "uris", Playlists und Alben über "context_uri".
+ *
+ * Standard: einzelne Songs über "uris", Playlists und Alben über "context_uri".
+ * Playlist-Modus (contextUri gesetzt): einzelne Songs laufen als "diese Playlist, ab diesem Song,
+ * ab dieser Stelle". Hintergrund: Auf manchen iPhones führt Spotify einzeln gesendete Songs
+ * nicht mehr aus, bestätigt den Befehl aber trotzdem. Playlists funktionieren dort weiter.
+ * Der Song muss dafür in der Playlist enthalten sein.
+ * @param {{contextUri?: string | null}} options
  */
-export function buildPlayBody(clip) {
+export function buildPlayBody(clip, { contextUri = null } = {}) {
   const link = parseSpotifyLink(clip.uri);
   if (!link) throw new Error(`„${clip.title || 'Clip'}“ hat keinen gültigen Spotify-Link.`);
   const position_ms = Math.max(0, Math.round(clip.startMs || 0));
-  if (link.type === 'track') return { uris: [link.uri], position_ms };
-  return { context_uri: link.uri, position_ms };
+  if (link.type !== 'track') return { context_uri: link.uri, position_ms };
+  const context = contextUri ? parseSpotifyLink(contextUri) : null;
+  if (context && context.type === 'playlist') {
+    return { context_uri: context.uri, offset: { uri: link.uri }, position_ms };
+  }
+  return { uris: [link.uri], position_ms };
+}
+
+/**
+ * Entscheidet bei Clips ohne feste Dauer, was nach einer Abfrage des Wiedergabezustands passiert.
+ * - ended: Spotify spielt nicht mehr
+ * - moved-on: Spotify ist zum nächsten Song gesprungen (im Playlist-Modus läuft sonst die Playlist weiter)
+ * - stop-at: Der Song endet vor der nächsten Abfrage, also genau dann stoppen
+ * @returns {{action: 'ended' | 'moved-on' | 'stop-at' | 'none', delayMs?: number}}
+ */
+export function playingClipAction(state, expectedUri, pollIntervalMs) {
+  if (!state || !state.is_playing) return { action: 'ended' };
+  const expected = parseSpotifyLink(expectedUri);
+  if (!expected || expected.type !== 'track' || !state.item) return { action: 'none' };
+  if (state.item.uri !== expected.uri) return { action: 'moved-on' };
+  const remaining = (state.item.duration_ms ?? Number.POSITIVE_INFINITY) - (state.progress_ms ?? 0);
+  if (remaining <= pollIntervalMs + 1000) return { action: 'stop-at', delayMs: Math.max(0, remaining - 300) };
+  return { action: 'none' };
 }
 
 /** Eindeutige ID für neue Clips. Zufall und Uhr sind injizierbar, damit Tests deterministisch sind. */
@@ -236,4 +263,88 @@ export function durationFromEnd(startMs, endText) {
   if (endMs === null) return { error: 'Ende bitte als m:ss angeben, z. B. 1:12, oder leer lassen.' };
   if (endMs <= startMs) return { error: 'Das Ende muss nach dem Start liegen.' };
   return { durationMs: endMs - startMs };
+}
+
+/**
+ * Wählt beim Start das Wiedergabegerät.
+ * Reihenfolge: gespeicherte Kennung, dann gespeicherter Name (Spotify vergibt nach Updates
+ * manchmal neue Kennungen), beim allerersten Start das aktive oder einzige Gerät.
+ * Ist das gespeicherte Gerät nicht erreichbar, wird bewusst NICHT auf ein anderes Gerät
+ * ausgewichen. Sonst spielt die Musik unbemerkt auf einem Laptop oder Fernseher.
+ * @param {Array<{id: string, name: string, isActive?: boolean}>} devices
+ * @param {{id?: string | null, name?: string | null}} saved
+ * @returns {{device: object | null, reason: 'id' | 'name' | 'first-run' | 'missing' | 'none'}}
+ */
+export function pickDevice(devices, saved = {}) {
+  const byId = saved.id ? devices.find((device) => device.id === saved.id) : null;
+  if (byId) return { device: byId, reason: 'id' };
+  if (saved.name) {
+    const byName = devices.filter((device) => device.name === saved.name);
+    if (byName.length === 1) return { device: byName[0], reason: 'name' };
+  }
+  if (saved.id || saved.name) return { device: null, reason: 'missing' };
+  const first = devices.find((device) => device.isActive) || (devices.length === 1 ? devices[0] : null);
+  return first ? { device: first, reason: 'first-run' } : { device: null, reason: 'none' };
+}
+
+/**
+ * Bewertet, was Spotify meldet, und liefert verständliche Befunde für die Diagnoseanzeige.
+ * @param {object} input
+ * @param {{id: string, name: string} | null} input.selected Gerät, das das Launchpad steuert
+ * @param {Array<{id: string, name: string}>} input.devices Geräteliste von Spotify
+ * @param {object | null} input.playback Antwort von GET /me/player
+ * @param {string | null} [input.expectedUri] Testclip, der gerade laufen sollte
+ * @param {string | null} [input.idleUri] Stille-Track
+ * @returns {Array<{level: 'ok' | 'info' | 'warn' | 'error', text: string}>}
+ */
+export function diagnose({ selected, devices = [], playback = null, expectedUri = null, idleUri = null, contextUri = null }) {
+  const findings = [];
+  const add = (level, text) => findings.push({ level, text });
+
+  if (!selected) {
+    add('error', 'Im Launchpad ist kein Wiedergabegerät gewählt.');
+  } else if (!devices.some((device) => device.id === selected.id)) {
+    add('error', `Das gewählte Gerät „${selected.name}“ meldet sich bei Spotify gerade nicht. Spotify darauf öffnen und „Aktualisieren“ tippen.`);
+  }
+  if (selected) {
+    const sameName = devices.filter((device) => device.name === selected.name);
+    if (sameName.length > 1) add('warn', `Spotify kennt ${sameName.length} Geräte namens „${selected.name}“.`);
+  }
+
+  const active = playback?.device;
+  if (!active) {
+    add(expectedUri ? 'error' : 'info', 'Spotify meldet gerade keine Wiedergabe auf irgendeinem Gerät.');
+    return findings;
+  }
+
+  add('info', `Spotify ist aktiv auf: „${active.name}“ (${active.type}).`);
+  add('info', contextUri ? 'Playlist-Modus ist an: Clips starten über die Launchpad-Playlist.' : 'Playlist-Modus ist aus: Clips starten als einzelne Songs.');
+  if (selected && active.id !== selected.id) {
+    add('error', `Spotify spielt auf „${active.name}“, das Launchpad steuert aber „${selected.name}“.`);
+  }
+  if (expectedUri) {
+    if (!playback.is_playing) add('error', 'Spotify hat den Befehl angenommen, meldet aber Pause.');
+    if (playback.item?.uri !== expectedUri) {
+      const what = playback.item?.uri === idleUri ? 'der Stille-Track' : `„${playback.item?.name ?? 'unbekannt'}“`;
+      const hint = contextUri ? ' Steht der Song in der Launchpad-Playlist?' : '';
+      add('error', `Statt des Testclips läuft ${what}.${hint}`);
+    }
+  } else if (idleUri && playback.item?.uri === idleUri) {
+    add('info', 'Im Leerlauf läuft der Stille-Track. So soll es sein.');
+  }
+  if (active.volume_percent === 0) {
+    add('error', `Die Lautstärke von „${active.name}“ steht in Spotify auf 0.`);
+  } else if (Number.isFinite(active.volume_percent) && active.volume_percent < 20) {
+    add('warn', `Die Lautstärke von „${active.name}“ steht in Spotify nur auf ${active.volume_percent} Prozent.`);
+  }
+
+  if (!findings.some((finding) => finding.level === 'error' || finding.level === 'warn')) {
+    add(
+      'ok',
+      expectedUri
+        ? `Spotify spielt den Testclip auf „${active.name}“. Ist das dein Abspielgerät und kommt trotzdem kein Ton, liegt es am Ton-Ausgang dieses Geräts (Kontrollzentrum, AirPlay-Symbol).`
+        : 'Keine Auffälligkeiten. Für eine echte Prüfung „Testclip abspielen“ tippen.',
+    );
+  }
+  return findings;
 }

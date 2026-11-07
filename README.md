@@ -96,6 +96,27 @@ Das Abspielgerät wird per Bluetooth oder Kabel mit der Box verbunden. Die Gerä
 - Nebeneffekte: etwas mehr Akkuverbrauch, und die Stille taucht in deinem Spotify-Verlauf auf. Ein Vorteil: Viele Bluetooth-Boxen schalten sich bei Stille-Wiedergabe nicht in den Standby.
 - Wacht Spotify trotzdem nicht auf, hilft „Spotify öffnen“ in der Statusleiste. Nach der Rückkehr lädt das Launchpad die Geräte automatisch neu.
 
+## Playlist-Modus (wenn Clips „laufen“, aber stumm bleiben)
+
+**Das Problem:** Auf manchen iPhones führt Spotify einzeln gesendete Songs nicht mehr aus. Spotify bestätigt den Befehl, stoppt dabei den laufenden Song, lädt aber keinen neuen. Der Sperrbildschirm zeigt dann einen leeren Player, kurz danach verschwindet das iPhone aus der Geräteliste. Playlists startet Spotify dagegen weiterhin. Wann sich das geändert hat, ist unklar. Vermutlich kam es mit einem Spotify-Update.
+
+**Die Lösung:** Im Playlist-Modus startet das Launchpad jeden Clip als „Launchpad-Playlist, ab diesem Song, ab dieser Stelle“.
+
+**Einrichten:**
+
+1. In Spotify eine Playlist „Launchpad“ anlegen.
+2. **Alle Clip-Songs** hineinlegen, und zwar genau die Versionen, deren Links im Launchpad hinterlegt sind. **Auch den Stille-Track.**
+3. Playlist teilen, Link kopieren.
+4. Im Launchpad unter „Mehr“ auf „Launchpad-Playlist festlegen“ tippen und den Link einfügen. Die Statusleiste zeigt „Playlist-Modus an“.
+
+**Zu beachten:**
+
+- Kommt ein neuer Clip ins Launchpad, muss der Song auch in die Playlist.
+- Fehlt ein Song in der Playlist, startet Spotify einen anderen. Das Launchpad prüft das 2 Sekunden nach dem Start, stoppt dann und meldet „Steht der Song in der Launchpad-Playlist?“.
+- Bei Clips ohne Endpunkt (z. B. Einlauf) würde Spotify nach Songende einfach den nächsten Playlist-Song spielen. Das Launchpad erkennt das und stoppt rechtzeitig.
+- Shuffle und Wiederholen in Spotify spielen keine Rolle, weil jeder Clip gezielt an seinem Song startet.
+- Ausschalten: „Launchpad-Playlist festlegen“ mit leerem Feld bestätigen.
+
 ## Clips einrichten
 
 1. „Bearbeiten (halten)“ etwa eine Sekunde gedrückt halten. Ein gelber Punkt zeigt Clips, deren Startpunkt noch nicht geprüft ist. Gestrichelte Clips haben noch keinen Link.
@@ -115,6 +136,20 @@ Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5
 - **Neue Taste während ein Clip läuft:** der neue Clip ersetzt den alten.
 - **Alles aus:** blendet aus und pausiert, egal was läuft.
 
+## Diagnose: Launchpad zeigt „Läuft“, aber es kommt kein Ton
+
+Das Launchpad zeigt „Läuft“, sobald Spotify den Befehl angenommen hat. Ob tatsächlich Ton herauskommt, kann es nicht sehen. Für solche Fälle gibt es unter „Mehr“ die **Diagnose**:
+
+1. „Diagnose“ öffnen. Oben steht, welches Gerät das Launchpad steuert, darunter alle Geräte, die Spotify gerade kennt.
+2. „Testclip abspielen“ tippen. Das Launchpad spielt einen Tor-Clip und fragt nach 2,5 Sekunden bei Spotify nach, was wirklich passiert.
+3. Die Befunde lesen. Erkannt werden unter anderem: Wiedergabe auf einem anderen Gerät, gewähltes Gerät nicht erreichbar, Lautstärke 0, Pause statt Wiedergabe, Stille-Track statt Clip.
+
+Meldet die Diagnose „OK“ für dein Abspielgerät und es kommt trotzdem kein Ton, liegt es am Ton-Ausgang dieses Geräts. Dann im Kontrollzentrum über das AirPlay-Symbol prüfen, wohin der Ton geht.
+
+**Gerät erscheint, verschwindet aber beim ersten Tippen:** Spotify ist auf dem iPhone eingeschlafen, bevor die Stille übernehmen konnte. „Wach halten“ kann Spotify wach halten, aber nicht aufwecken. So kommst du wieder in den Takt: „Spotify öffnen“ tippen, dort kurz irgendeinen Song starten und zurück ins Launchpad wechseln. Das Launchpad lädt die Geräte automatisch neu und startet sofort die Stille. Ab dann bleibt Spotify wach.
+
+**Gerätewahl beim Start:** Das Launchpad sucht das zuletzt gewählte Gerät erst über seine Kennung, dann über seinen Namen. Ist es nicht erreichbar, weicht es bewusst nicht auf ein anderes Gerät aus, sondern meldet das. Frühere Versionen haben in diesem Fall still ein anderes aktives Gerät gewählt, etwa einen Laptop, und sich das gemerkt.
+
 ## Prüfen und Testen
 
 ### Automatisierte Tests
@@ -122,7 +157,7 @@ Richtwerte der Vorbelegung: Tor 7 Sekunden mit 1,5 Sekunden Ausblenden, Parade 5
 Voraussetzung ist Node.js ab Version 18, sonst nichts.
 
 ```bash
-npm test        # 46 Tests: Logik, Wiedergabesteuerung, Wach halten, API-Client
+npm test        # 63 Tests: Logik, Wiedergabesteuerung, Wach halten, Playlist-Modus, Gerätewahl, Diagnose, API-Client
 npm run check   # Syntaxprüfung aller Module
 ```
 

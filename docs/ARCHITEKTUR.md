@@ -141,6 +141,12 @@ Einstellungen (Gerät, Gesamtlautstärke, Rotationsstand, Wach halten, Stille-Tr
 
 **Endpunkt statt Dauer im Editor.** Musikalisch denkt man in Schnittpunkten, nicht in Sekunden. Der Editor zeigt deshalb Start und Ende als Songposition. Gespeichert wird weiterhin `durationMs`, damit das Datenformat und exportierte Belegungen kompatibel bleiben.
 
+**Playlist-Modus als Umweg.** Im November 2026 hörte Spotify auf dem iPhone des Nutzers auf, einzeln gesendete Songs (`uris`) auszuführen, obwohl die API den Befehl mit 204 bestätigte. Playlists (`context_uri`) liefen weiter. Ist eine Launchpad-Playlist hinterlegt, baut `buildPlayBody` deshalb `context_uri` plus `offset.uri` plus `position_ms`. Zwei Absicherungen kommen dazu. `scheduleVerify` prüft 2 Sekunden nach dem Start, ob der richtige Song läuft, und stoppt sonst mit Hinweis. `playingClipAction` verhindert bei Clips ohne Endpunkt, dass nach Songende die Playlist weiterläuft. Der Modus ist abschaltbar, damit bei einer Korrektur durch Spotify der direkte Weg ohne Pflege der Playlist wieder nutzbar ist.
+
+**Gerätewahl ohne stilles Ausweichen.** Beim Start sucht `pickDevice` das gespeicherte Gerät über die Kennung und danach über den Namen, weil Spotify Kennungen nach Updates neu vergeben kann. Fehlt es, wird kein anderes Gerät gewählt und die gespeicherte Wahl bleibt unangetastet. Die erste Version wich auf das gerade aktive Gerät aus und speicherte es. Das führte dazu, dass nach einigen Wochen Musik auf einem anderen Gerät lief, während das Launchpad „Läuft“ zeigte.
+
+**Diagnose aus Sicht von Spotify.** Die Bewertung steckt in der reinen Funktion `diagnose` und ist damit testbar. Die Oberfläche fragt nur Geräteliste und Wiedergabezustand ab und spielt auf Wunsch einen Testclip.
+
 **Leere Spotify-Links in der Vorbelegung.** Song-IDs werden nicht geraten, sondern im Editor aus Spotify übernommen. Unterschiedliche Versionen eines Songs haben unterschiedliche Zeiten, deshalb gehört die ID zur geprüften Version.
 
 **Keine Abhängigkeiten.** Weniger Angriffsfläche, strenge Content-Security-Policy möglich, kein Build-Schritt, lange wartungsfrei.

@@ -15,8 +15,17 @@
  * Eine spätere Engine für lokale Audiodateien kann dieselbe Schnittstelle bedienen.
  */
 
-import { FADE_STEPS, IDLE_CHECK_MS, IDLE_RESTART_MARGIN_MS, POLL_INTERVAL_MS } from './config.js';
-import { buildFadeSteps, buildPlayBody, clampVolume, idleAction, scaledVolume, stopDelayMs } from './logic.js';
+import { FADE_STEPS, IDLE_CHECK_MS, IDLE_RESTART_MARGIN_MS, POLL_INTERVAL_MS, VERIFY_DELAY_MS } from './config.js';
+import {
+  buildFadeSteps,
+  buildPlayBody,
+  clampVolume,
+  idleAction,
+  parseSpotifyLink,
+  playingClipAction,
+  scaledVolume,
+  stopDelayMs,
+} from './logic.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,6 +42,7 @@ export class PlaybackController extends EventTarget {
    * @param {() => number} options.getMasterVolume
    * @param {() => string | null} [options.getIdleUri] Stille-Track oder null, wenn Wach halten aus ist
    * @param {() => boolean} [options.isEditing] true im Bearbeitungsmodus, dann bleibt ein fremder Song stehen
+   * @param {() => string | null} [options.getContextUri] Launchpad-Playlist für den Playlist-Modus oder null
    * @param {(d: Device) => void} [options.onVolumeUnsupported]
    */
   constructor(
@@ -42,9 +52,11 @@ export class PlaybackController extends EventTarget {
       getMasterVolume,
       getIdleUri = () => null,
       isEditing = () => false,
+      getContextUri = () => null,
       onVolumeUnsupported = () => {},
       pollIntervalMs = POLL_INTERVAL_MS,
       idleCheckMs = IDLE_CHECK_MS,
+      verifyDelayMs = VERIFY_DELAY_MS,
     },
   ) {
     super();
@@ -53,6 +65,9 @@ export class PlaybackController extends EventTarget {
     this.getMasterVolume = getMasterVolume;
     this.getIdleUri = getIdleUri;
     this.isEditing = isEditing;
+    this.getContextUri = getContextUri;
+    this.verifyDelayMs = verifyDelayMs;
+    this.verifyTimer = null;
     this.onVolumeUnsupported = onVolumeUnsupported;
     this.pollIntervalMs = pollIntervalMs;
     this.idleCheckMs = idleCheckMs;
@@ -101,7 +116,7 @@ export class PlaybackController extends EventTarget {
     try {
       await this.applyVolume(device, scaledVolume(clip.volume, this.getMasterVolume()));
       if (token !== this.token) return;
-      await this.client.play(device.id, buildPlayBody(clip));
+      await this.client.play(device.id, buildPlayBody(clip, { contextUri: this.getContextUri() }));
     } catch (err) {
       if (token === this.token) this.reset();
       throw err;
@@ -113,8 +128,9 @@ export class PlaybackController extends EventTarget {
 
     // supportsVolume erst hier lesen: applyVolume kann es beim Start auf false gesetzt haben.
     const delay = stopDelayMs(clip, { canFade: Boolean(device.supportsVolume) });
+    if (this.getContextUri() && parseSpotifyLink(clip.uri)?.type === 'track') this.scheduleVerify(token, clip);
     if (delay === null) {
-      this.startPolling(token);
+      this.startPolling(token, clip);
     } else {
       this.autoStopTimer = setTimeout(() => {
         if (token === this.token) this.stop().catch((err) => this.fail(err));
@@ -155,7 +171,7 @@ export class PlaybackController extends EventTarget {
     if (device) {
       try {
         // Mit Wach halten läuft statt Pause der Stille-Track weiter. Hörbar ist das wie ein Stopp.
-        if (idleUri) await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
+        if (idleUri) await this.client.play(device.id, this.idleBody(idleUri));
         else await this.client.pause(device.id);
       } catch (err) {
         // 403 heißt beim Pausieren meist "war schon pausiert". Das ist für einen Stopp kein Fehler.
@@ -190,8 +206,10 @@ export class PlaybackController extends EventTarget {
 
   clearTimers() {
     clearTimeout(this.autoStopTimer);
+    clearTimeout(this.verifyTimer);
     clearInterval(this.pollTimer);
     this.autoStopTimer = null;
+    this.verifyTimer = null;
     this.pollTimer = null;
   }
 
@@ -232,20 +250,57 @@ export class PlaybackController extends EventTarget {
     }
   }
 
-  /** Bei Clips ohne feste Dauer erkennen, ob Spotify inzwischen pausiert hat oder der Song zu Ende ist. */
-  startPolling(token) {
+  /**
+   * Bei Clips ohne feste Dauer: erkennen, ob Spotify pausiert hat, der Song endet oder Spotify
+   * schon zum nächsten Song gesprungen ist. Im Playlist-Modus würde sonst die Playlist weiterlaufen.
+   */
+  startPolling(token, clip) {
     this.pollTimer = setInterval(async () => {
       if (token !== this.token) return;
+      let state;
       try {
-        const state = await this.client.getPlayback();
-        if (token === this.token && (!state || !state.is_playing)) {
-          this.reset();
-          this.checkIdle().catch(() => {});
-        }
+        state = await this.client.getPlayback();
       } catch {
         // Polling ist Komfort. Fehler hier stören das Spiel nicht und werden nicht gemeldet.
+        return;
+      }
+      if (token !== this.token) return;
+      const { action, delayMs } = playingClipAction(state, clip.uri, this.pollIntervalMs);
+      if (action === 'ended') {
+        this.reset();
+        this.checkIdle().catch(() => {});
+      } else if (action === 'moved-on') {
+        this.stop().catch((err) => this.fail(err));
+      } else if (action === 'stop-at' && !this.autoStopTimer) {
+        this.autoStopTimer = setTimeout(() => {
+          if (token === this.token) this.stop().catch((err) => this.fail(err));
+        }, delayMs);
       }
     }, this.pollIntervalMs);
+  }
+
+  /**
+   * Playlist-Modus: kurz nach dem Start prüfen, ob Spotify den richtigen Song spielt.
+   * Fehlt der Song in der Playlist, startet Spotify sonst irgendeinen anderen. Dann lieber stoppen.
+   */
+  scheduleVerify(token, clip) {
+    this.verifyTimer = setTimeout(async () => {
+      if (token !== this.token) return;
+      let state;
+      try {
+        state = await this.client.getPlayback();
+      } catch {
+        return;
+      }
+      if (token !== this.token || !state?.item) return;
+      if (state.item.uri !== parseSpotifyLink(clip.uri).uri) {
+        try {
+          await this.stop({ fade: false });
+        } finally {
+          this.fail(new Error(`Spotify spielt „${state.item.name}“ statt „${clip.title}“. Steht der Song in der Launchpad-Playlist?`));
+        }
+      }
+    }, this.verifyDelayMs);
   }
 
   // Wach halten
@@ -277,7 +332,7 @@ export class PlaybackController extends EventTarget {
     const state = await this.client.getPlayback();
     if (token !== this.token || this.phase !== 'idle') return;
     if (idleAction(state, idleUri, IDLE_RESTART_MARGIN_MS, { keepForeign: this.isEditing() }) === 'start') {
-      await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
+      await this.client.play(device.id, this.idleBody(idleUri));
     }
   }
 
@@ -290,6 +345,11 @@ export class PlaybackController extends EventTarget {
     const idleUri = this.getIdleUri();
     const device = this.getDevice();
     if (!idleUri || !device || this.phase !== 'idle') return;
-    await this.client.play(device.id, { uris: [idleUri], position_ms: 0 });
+    await this.client.play(device.id, this.idleBody(idleUri));
+  }
+
+  /** Anfragekörper für den Stille-Track. Im Playlist-Modus muss auch er in der Playlist stehen. */
+  idleBody(idleUri) {
+    return buildPlayBody({ uri: idleUri, startMs: 0, title: 'Stille-Track' }, { contextUri: this.getContextUri() });
   }
 }

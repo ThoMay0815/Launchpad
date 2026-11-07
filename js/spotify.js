@@ -23,7 +23,7 @@ export class SpotifyError extends Error {
 /** Übersetzt Spotify-Fehler in Meldungen, mit denen man in der Halle etwas anfangen kann. */
 export function describeError(status, reason, fallback) {
   if (reason === 'NO_ACTIVE_DEVICE' || status === 404) {
-    return 'Spotify-Gerät nicht erreichbar. Spotify auf dem Abspielgerät öffnen, am besten "Wach halten" einschalten.';
+    return 'Spotify auf dem Abspielgerät schläft. Dort Spotify öffnen, kurz einen Song starten und zurückkommen. Mit „Wach halten“ bleibt es danach wach.';
   }
   if (RETRYABLE_STATUS.has(status)) return `Spotify-Server antworten gerade nicht (Fehler ${status}). Nochmal tippen.`;
   if (reason === 'PREMIUM_REQUIRED') return 'Für die Steuerung ist Spotify Premium nötig.';

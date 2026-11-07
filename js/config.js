@@ -41,3 +41,6 @@ export const IDLE_RESTART_MARGIN_MS = 90_000;
 
 /** "Ende vorhören" spielt diese Zeitspanne vor dem Endpunkt. */
 export const END_PREVIEW_MS = 4_000;
+
+/** Playlist-Modus: so lange nach dem Start prüfen, ob Spotify wirklich den richtigen Song spielt. */
+export const VERIFY_DELAY_MS = 2_000;

@@ -9,6 +9,9 @@ import assert from 'node:assert/strict';
 import {
   buildFadeSteps,
   buildPlayBody,
+  diagnose,
+  pickDevice,
+  playingClipAction,
   durationFromEnd,
   idleAction,
   formatSeconds,
@@ -186,7 +189,8 @@ class FakeClient {
 
   async play(_deviceId, body) {
     if (this.playDelayMs) await sleep(this.playDelayMs);
-    this.calls.push(`play:${body.uris?.[0] ?? body.context_uri}@${body.position_ms}`);
+    const target = body.uris?.[0] ?? (body.offset ? `${body.context_uri}>${body.offset.uri}` : body.context_uri);
+    this.calls.push(`play:${target}@${body.position_ms}`);
   }
 
   async pause() {
@@ -307,7 +311,7 @@ describe('SpotifyClient', () => {
     const auth = { getAccessToken: async () => 't' };
     const body = JSON.stringify({ error: { status: 404, message: 'Player command failed: No active device found', reason: 'NO_ACTIVE_DEVICE' } });
     const client = new SpotifyClient(auth, { fetchImpl: async () => new Response(body, { status: 404 }) });
-    await assert.rejects(client.play('dev', {}), (err) => err.reason === 'NO_ACTIVE_DEVICE' && /Spotify auf dem Abspielgerät öffnen/.test(err.message));
+    await assert.rejects(client.play('dev', {}), (err) => err.reason === 'NO_ACTIVE_DEVICE' && /Spotify öffnen, kurz einen Song starten/.test(err.message));
   });
 
   test('Befehle laufen strikt nacheinander, auch wenn einer scheitert', async () => {
@@ -527,5 +531,183 @@ describe('Endpunkt auf Geräten ohne Lautstärkesteuerung', () => {
     assert.equal(controller.phase, 'fading');
     await sleep(120);
     assert.equal(controller.phase, 'idle');
+  });
+});
+
+describe('Gerätewahl beim Start', () => {
+  const iphone = { id: 'i1', name: 'iPhone von Thorsten', isActive: false };
+  const laptop = { id: 'l1', name: 'MacBook', isActive: true };
+
+  test('findet das gespeicherte Gerät über die Kennung', () => {
+    assert.deepEqual(pickDevice([laptop, iphone], { id: 'i1', name: 'iPhone von Thorsten' }), { device: iphone, reason: 'id' });
+  });
+
+  test('ordnet bei neuer Kennung über den Namen zu', () => {
+    const renamed = { ...iphone, id: 'i2' };
+    assert.deepEqual(pickDevice([laptop, renamed], { id: 'i1', name: 'iPhone von Thorsten' }), { device: renamed, reason: 'name' });
+  });
+
+  test('weicht NICHT auf ein anderes aktives Gerät aus, wenn das gespeicherte fehlt', () => {
+    assert.deepEqual(pickDevice([laptop], { id: 'i1', name: 'iPhone von Thorsten' }), { device: null, reason: 'missing' });
+  });
+
+  test('ist der Name doppelt, wird nicht geraten', () => {
+    const twin = { id: 'i3', name: 'iPhone von Thorsten' };
+    assert.equal(pickDevice([iphone, twin], { id: 'alt', name: 'iPhone von Thorsten' }).reason, 'missing');
+  });
+
+  test('beim ersten Start wird das aktive oder einzige Gerät genommen', () => {
+    assert.deepEqual(pickDevice([iphone, laptop], {}), { device: laptop, reason: 'first-run' });
+    assert.deepEqual(pickDevice([iphone], {}), { device: iphone, reason: 'first-run' });
+    assert.deepEqual(pickDevice([iphone, { ...laptop, isActive: false }], {}), { device: null, reason: 'none' });
+  });
+});
+
+describe('Diagnose', () => {
+  const iphone = { id: 'i1', name: 'iPhone', type: 'Smartphone' };
+  const laptop = { id: 'l1', name: 'MacBook', type: 'Computer' };
+  const CLIP = `spotify:track:${TRACK_ID}`;
+  const levels = (findings) => findings.map((finding) => finding.level);
+
+  test('erkennt, wenn Spotify auf einem anderen Gerät spielt', () => {
+    const findings = diagnose({
+      selected: iphone,
+      devices: [iphone, laptop],
+      playback: { is_playing: true, device: { ...laptop, volume_percent: 80 }, item: { uri: CLIP } },
+      expectedUri: CLIP,
+    });
+    assert.ok(findings.some((f) => f.level === 'error' && f.text.includes('MacBook') && f.text.includes('iPhone')));
+  });
+
+  test('erkennt Lautstärke 0 und Pause', () => {
+    const findings = diagnose({
+      selected: iphone,
+      devices: [iphone],
+      playback: { is_playing: false, device: { ...iphone, volume_percent: 0 }, item: { uri: CLIP } },
+      expectedUri: CLIP,
+    });
+    assert.ok(findings.some((f) => f.text.includes('auf 0')));
+    assert.ok(findings.some((f) => f.text.includes('Pause')));
+  });
+
+  test('erkennt, wenn statt des Testclips die Stille läuft', () => {
+    const idle = 'spotify:track:stille';
+    const findings = diagnose({
+      selected: iphone,
+      devices: [iphone],
+      playback: { is_playing: true, device: { ...iphone, volume_percent: null }, item: { uri: idle } },
+      expectedUri: CLIP,
+      idleUri: idle,
+    });
+    assert.ok(findings.some((f) => f.level === 'error' && f.text.includes('Stille-Track')));
+  });
+
+  test('meldet OK und verweist auf den Ton-Ausgang, wenn Spotify alles richtig meldet', () => {
+    const findings = diagnose({
+      selected: iphone,
+      devices: [iphone],
+      playback: { is_playing: true, device: { ...iphone, volume_percent: null }, item: { uri: CLIP } },
+      expectedUri: CLIP,
+    });
+    assert.equal(levels(findings).at(-1), 'ok');
+    assert.ok(!levels(findings).includes('error'));
+  });
+
+  test('meldet ein nicht erreichbares gewähltes Gerät', () => {
+    const findings = diagnose({ selected: iphone, devices: [laptop], playback: null });
+    assert.ok(findings.some((f) => f.level === 'error' && f.text.includes('meldet sich bei Spotify gerade nicht')));
+  });
+});
+
+describe('Playlist-Modus', () => {
+  const PLAYLIST = `spotify:playlist:${'P'.repeat(22)}`;
+  const TRACK = `spotify:track:${TRACK_ID}`;
+  const IDLE = `spotify:track:${'S'.repeat(22)}`;
+
+  test('einzelne Songs starten als Playlist ab diesem Song und dieser Stelle', () => {
+    assert.deepEqual(buildPlayBody({ uri: TRACK, startMs: 65_000 }, { contextUri: PLAYLIST }), {
+      context_uri: PLAYLIST,
+      offset: { uri: TRACK },
+      position_ms: 65_000,
+    });
+  });
+
+  test('ohne Playlist bleibt es beim einzelnen Song, Playlist-Clips bleiben unverändert', () => {
+    assert.deepEqual(buildPlayBody({ uri: TRACK, startMs: 0 }), { uris: [TRACK], position_ms: 0 });
+    const other = `spotify:playlist:${'H'.repeat(22)}`;
+    assert.deepEqual(buildPlayBody({ uri: other, startMs: 0 }, { contextUri: PLAYLIST }), { context_uri: other, position_ms: 0 });
+  });
+
+  test('playingClipAction erkennt Ende, Weitersprung und nahes Songende', () => {
+    assert.equal(playingClipAction(null, TRACK, 10_000).action, 'ended');
+    assert.equal(playingClipAction({ is_playing: false }, TRACK, 10_000).action, 'ended');
+    assert.equal(playingClipAction({ is_playing: true, item: { uri: IDLE } }, TRACK, 10_000).action, 'moved-on');
+    assert.deepEqual(
+      playingClipAction({ is_playing: true, item: { uri: TRACK, duration_ms: 200_000 }, progress_ms: 195_000 }, TRACK, 10_000),
+      { action: 'stop-at', delayMs: 4700 },
+    );
+    assert.equal(playingClipAction({ is_playing: true, item: { uri: TRACK, duration_ms: 200_000 }, progress_ms: 10_000 }, TRACK, 10_000).action, 'none');
+  });
+
+  function makePlaylistController(client) {
+    const device = { id: 'dev', name: 'iPhone', supportsVolume: false, volume: null };
+    const errors = [];
+    const controller = new PlaybackController(client, {
+      getDevice: () => device,
+      getMasterVolume: () => 100,
+      getIdleUri: () => IDLE,
+      getContextUri: () => PLAYLIST,
+      pollIntervalMs: 20,
+      verifyDelayMs: 20,
+    });
+    controller.setDevice(device);
+    controller.addEventListener('error', (event) => errors.push(event.detail.message));
+    return { controller, errors };
+  }
+
+  test('Clip und Stille laufen über die Playlist', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => ({ is_playing: true, item: { uri: TRACK } });
+    const { controller } = makePlaylistController(client);
+    await controller.play('tor', clipA);
+    await controller.stop();
+    assert.deepEqual(client.calls, [`play:${PLAYLIST}>${TRACK}@65000`, `play:${PLAYLIST}>${IDLE}@0`]);
+  });
+
+  test('spielt Spotify einen anderen Song, wird gestoppt und gewarnt', async () => {
+    const client = new FakeClient();
+    client.getPlayback = async () => ({ is_playing: true, item: { uri: 'spotify:track:anderer', name: 'Anderer Song' } });
+    const { controller, errors } = makePlaylistController(client);
+    await controller.play('tor', { ...clipA, durationMs: 5000 });
+    await sleep(60);
+    assert.equal(controller.phase, 'idle');
+    assert.equal(client.calls.at(-1), `play:${PLAYLIST}>${IDLE}@0`);
+    assert.match(errors[0], /Launchpad-Playlist/);
+  });
+
+  test('springt Spotify bei einem Einlauf-Clip zum nächsten Playlist-Song, wird gestoppt', async () => {
+    const client = new FakeClient();
+    let current = TRACK;
+    client.getPlayback = async () => ({ is_playing: true, item: { uri: current, name: 'x', duration_ms: 600_000 }, progress_ms: 1000 });
+    const { controller } = makePlaylistController(client);
+    await controller.play('einlauf', clipA);
+    await sleep(40);
+    assert.equal(controller.phase, 'playing', 'solange der richtige Song läuft, bleibt der Clip an');
+    current = 'spotify:track:naechster';
+    await sleep(60);
+    assert.equal(controller.phase, 'idle');
+  });
+
+  test('Diagnose weist im Playlist-Modus auf fehlende Songs hin', () => {
+    const iphone = { id: 'i1', name: 'iPhone', type: 'Smartphone' };
+    const findings = diagnose({
+      selected: iphone,
+      devices: [iphone],
+      playback: { is_playing: true, device: { ...iphone, volume_percent: null }, item: { uri: 'spotify:track:x', name: 'X' } },
+      expectedUri: TRACK,
+      contextUri: PLAYLIST,
+    });
+    assert.ok(findings.some((f) => f.level === 'error' && f.text.includes('Launchpad-Playlist')));
+    assert.ok(findings.some((f) => f.text.includes('Playlist-Modus ist an')));
   });
 });
